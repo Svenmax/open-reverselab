@@ -19,7 +19,8 @@
 | 目标 | 入口 | 说明 |
 |---|---|---|
 | 域名/站点级一次性评估 | `.claude/workflows/ctf-full-pipeline.js` | 资产发现 → DoS 面 → 漏洞挖掘 → 验证 → 综合报告；适合 agent workflow 环境。 |
-| 单题/靶场 24h 可恢复推进 | `scripts/ctf-website/ctf_intake.py` + `scripts/ctf-website/ctf_autopilot.py` | 先生成 `ai_manifest.json`，再按预算循环执行 allowlist 动作并写回 checkpoint。 |
+| Claude Code 24h 可恢复推进 | `/loop /ctf-24h <target> [case]` | `/loop` 负责不中断调度，`ctf-24h-round` 每轮推进并写 checkpoint。 |
+| Codex / 无 workflow runner fallback | `scripts/ctf-website/ctf_intake.py` + `scripts/ctf-website/ctf_autopilot.py` | 先生成 `ai_manifest.json`，再循环单轮动作并由 Agent 继续攻击网判断。 |
 
 ### 24h CTF Autopilot
 
@@ -35,7 +36,13 @@ python scripts/ctf-website/ctf_intake.py <case-name> --url "https://target.examp
 python scripts/ctf-website/ctf_autopilot.py cases/<case>/ai_manifest.json --max-actions 4
 ```
 
-24 小时循环执行：
+Claude Code 中推荐用 `/loop + workflow`：
+
+```text
+/loop /ctf-24h https://target.example/ my-case
+```
+
+无 Claude workflow runner 时可用 Python fallback 做 checkpoint 心跳：
 
 ```bash
 python scripts/ctf-website/ctf_autopilot.py cases/<case>/ai_manifest.json \
@@ -44,7 +51,8 @@ python scripts/ctf-website/ctf_autopilot.py cases/<case>/ai_manifest.json \
 
 规则：
 
-1. Autopilot 只执行 allowlist 动作：HTTP baseline、fingerprint 模板创建、fingerprint→CVE pipeline、CVE graph/chain 重建。
-2. SQLi、XSS、SSRF、认证态等高上下文动作仍记录为 `manual_required`，由 Agent 依据 KB 技术文件继续推进。
-3. 每轮写回 `ai_manifest.json` 的 `autopilot.rounds[]`、`next_actions` 和 `evidence[]`，中断后可直接再次运行同一命令恢复。
-4. 默认 CVE pipeline 使用 `--no-network`；需要实时 NVD enrichment 时增加 `--allow-network-cve`。
+1. 不让单个 workflow 阻塞 24 小时；每轮必须有界执行并返回 `CONTINUE|DONE|EXHAUSTED`。
+2. Autopilot 只执行 allowlist 动作：HTTP baseline、fingerprint 模板创建、fingerprint→CVE pipeline、CVE graph/chain 重建。
+3. SQLi、XSS、SSRF、认证态等高上下文动作记录为 `agent_required`，由下一轮 Agent 依据 KB 技术文件自动推进。
+4. 每轮写回 `ai_manifest.json` 的 `autopilot.rounds[]`、`next_actions` 和 `evidence[]`，中断后可直接再次运行同一命令恢复。
+5. 默认 CVE pipeline 使用 `--no-network`；需要实时 NVD enrichment 时增加 `--allow-network-cve`。

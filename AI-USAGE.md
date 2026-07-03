@@ -24,7 +24,38 @@
 7. **证据落盘**：原始输出进 `exports/<board>/`，笔记进 `notes/<board>/`，最终报告进 `reports/<board>/`。
 8. **可回放**：记录关键输入、输出路径、版本和时间。
 
-## 2.1 公共仓库边界
+## 2.1 Claude Code / Codex 长跑模式
+
+本仓库首先是给 Claude Code / Codex 读取的工作文件夹。需要“24 小时不中断 CTF”
+时，不要只靠提示词，也不要让单个 workflow 阻塞 24 小时；使用：
+
+```
+/loop  →  .claude/workflows/ctf-24h-round.js  →  cases/<case>/ai_manifest.json
+```
+
+规则：
+
+1. `/loop` 是外层调度器，负责重复调用单轮任务。
+2. `ctf-24h-round` 每次只做一轮有界动作，必须输出 `STATUS: CONTINUE|DONE|EXHAUSTED`。
+3. `ai_manifest.json` 是唯一恢复点；每轮都要写 `autopilot.rounds[]`、`evidence[]`、
+   `dead_ends[]` 和 `next_actions[]`。
+4. 中断/重启后，Claude Code 或 Codex 先读同一个 manifest，再继续下一轮，不从头开始。
+5. 真实 target、请求响应、flag、截图和日志只留在本地 `cases/` / `exports/` / `reports/`，
+   不进入公开提交。
+
+无人值守 runner 配置：
+
+```bash
+python3 scripts/misc/setup_unattended_ctf_runner.py --overwrite
+```
+
+该脚本在本文件夹内生成本地 `.codex/` 配置和 `.claude/settings.local.json`：
+
+- Codex: `approval_policy = "never"`，`sandbox_mode = "danger-full-access"`。
+- Claude Code: 本地 settings 允许 Bash、文件读写、搜索和 Web 工具。
+- 这些文件是本地运行配置，不作为公开制品提交。
+
+## 2.2 公共仓库边界
 
 不要把私人工作区的 `cases/`、samples、日志、真实目标、凭据、用户目录或个人信息
 迁入本仓库。通用发现应去标识化后写入 `kb/`；发布前运行

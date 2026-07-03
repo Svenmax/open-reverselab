@@ -75,11 +75,11 @@ Case 目录的 AI 可读索引文件结构说明。Web CTF 当前使用
 1. `ctf_intake.py` 创建初始 manifest、目录树和 HTTP baseline。
 2. `ctf_ai_next.py` 只读 manifest 并生成下一步计划。
 3. `ctf_autopilot.py` 读取计划，选择 P0/P1/P2 动作，执行 allowlist 动作或标记
-   `manual_required`，然后写回：
+   `agent_required`，然后写回：
    - `autopilot.rounds[]`：每轮计划/执行/checkpoint。
    - `next_actions[]`：下一轮优先动作摘要。
    - `evidence[]`：HTTP baseline、fingerprint 模板、CVE pipeline 等证据。
-4. Agent/人工完成非 allowlist 动作后，应补充 `evidence[]` 或 `dead_ends[]`，再跑下一轮 autopilot。
+4. Agent 完成非 allowlist 动作后，应补充 `evidence[]` 或 `dead_ends[]`，再跑下一轮 autopilot。
 
 AI 进入 case 目录后应首先读取 `ai_manifest.json` 获取全局视图和最近一轮
 `autopilot.last_round_id`。

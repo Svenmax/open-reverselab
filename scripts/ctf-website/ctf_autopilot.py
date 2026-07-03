@@ -325,8 +325,8 @@ def execute_action(
         if action_name == "Rebuild CVE correlation graph and multi-CVE chain plan":
             return rebuild_cve_graph_chain(manifest, manifest_path, timeout=command_timeout)
         return {
-            "status": "manual_required",
-            "reason": "no deterministic allowlist handler for this action",
+            "status": "agent_required",
+            "reason": "no deterministic allowlist handler; queue for the next AI-driven attack round",
         }
     except subprocess.TimeoutExpired as exc:
         return {"status": "error", "error": f"timeout after {exc.timeout}s", "handler": action_name}

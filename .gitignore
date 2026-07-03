@@ -70,6 +70,7 @@ tools/ctf-website/_downloads/
 
 # Local agent / IDE config (not part of public release)
 .codex/
+.claude/settings.local.json
 .serena/
 
 # Generated reports (may contain machine paths); keep README stubs
