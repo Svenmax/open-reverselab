@@ -30,6 +30,12 @@ python3 scripts/misc/setup_unattended_ctf_runner.py --overwrite
 /ctf-24h <target-url-or-domain> [case-name]
 ```
 
+如果输入包含多个 target（逗号/空白/换行分隔），改用：
+
+```text
+/loop /ctf-24h-fleet <target1,target2,...> [fleet-name]
+```
+
 如果没有给 `case-name`，用目标 host 生成去标识化 slug。所有真实请求/响应、截图、日志和 flag 只写入本地
 `cases/`、`exports/ctf-website/`、`notes/ctf-website/`、`reports/ctf-website/`，不要提交这些私有产物。
 
@@ -78,14 +84,14 @@ python3 scripts/misc/setup_unattended_ctf_runner.py --overwrite
 在 Claude Code 中推荐这样启动：
 
 ```text
-/loop /ctf-24h https://target.example/ my-case
+/loop /ctf-24h <target-url-or-domain> <case-name>
 ```
 
 如果你的 Claude Code 版本要求先进入 loop，再输入命令，则使用：
 
 ```text
 /loop
-/ctf-24h https://target.example/ my-case
+/ctf-24h <target-url-or-domain> <case-name>
 ```
 
 每轮 workflow 必须输出以下状态之一：

@@ -15,24 +15,41 @@ export const meta = {
 //   object.target      → 目标 URL/domain
 //   object.caseName    → case 名；默认从 target 生成
 //   object.manifest    → ai_manifest.json 路径；有则优先使用
+//   object.caseRoot    → case 根目录，默认 cases
+//   object.reportRoot  → report 根目录，默认 reports/ctf-website
 //   object.maxActions  → ctf_autopilot 单轮最多动作数，默认 4
+//   object.maxWorkflows → attack-router 本轮最多 worker 数，默认 4
+//   object.workerIds   → 可选攻击 worker allowlist
 //   object.execute     → 是否执行 allowlist 动作，默认 true
 //   object.stopOnExhausted → 全路径耗尽时停止，默认 true
 // ================================================================
 
 const rawTarget = typeof args === 'string' ? args : args?.target || ''
-const target = rawTarget || 'https://target.example/'
+if (!rawTarget) {
+  throw new Error('ctf-24h-round requires args.target or string target')
+}
+const target = rawTarget
 const safeTarget = target
   .replace(/^https?:\/\//, '')
   .replace(/[^a-zA-Z0-9._-]+/g, '-')
   .replace(/^-+|-+$/g, '')
   .toLowerCase()
-const caseName = typeof args === 'object' && args?.caseName ? args.caseName : safeTarget || 'ctf-target'
+const caseRoot = typeof args === 'object' && args?.caseRoot ? args.caseRoot : 'cases'
+const reportRoot = typeof args === 'object' && args?.reportRoot ? args.reportRoot : 'reports/ctf-website'
+const caseName = typeof args === 'object' && args?.caseName ? args.caseName : safeTarget
+const caseDir = `${caseRoot}/${caseName}`
 const manifest =
   typeof args === 'object' && args?.manifest
     ? args.manifest
-    : `cases/${caseName}/ai_manifest.json`
+    : `${caseDir}/ai_manifest.json`
 const maxActions = typeof args === 'object' && args?.maxActions ? args.maxActions : 4
+const maxWorkflows = typeof args === 'object' && args?.maxWorkflows ? args.maxWorkflows : 4
+const workerIds = typeof args === 'object' && args?.workerIds ? args.workerIds : []
+const testOrigin = typeof args === 'object' && args?.testOrigin ? args.testOrigin : undefined
+const redirectProbeHost = typeof args === 'object' && args?.redirectProbeHost ? args.redirectProbeHost : undefined
+const ssrfProbeTargets = typeof args === 'object' && args?.ssrfProbeTargets ? args.ssrfProbeTargets : undefined
+const credentialPairs = typeof args === 'object' && args?.credentialPairs ? args.credentialPairs : undefined
+const forwardedIp = typeof args === 'object' && args?.forwardedIp ? args.forwardedIp : undefined
 const execute = !(typeof args === 'object' && args?.execute === false)
 const stopOnExhausted = !(typeof args === 'object' && args?.stopOnExhausted === false)
 
@@ -46,7 +63,10 @@ const checkpoint = await agent(
 - Target: ${target}
 - Case name: ${caseName}
 - Manifest path: ${manifest}
+- Case root: ${caseRoot}
+- Report root: ${reportRoot}
 - Max actions: ${maxActions}
+- Max attack workflows: ${maxWorkflows}
 - Execute allowlist actions: ${execute}
 
 ## 必读
@@ -60,10 +80,10 @@ const checkpoint = await agent(
 如果 \`${manifest}\` 不存在：
 
 \`\`\`bash
-python3 scripts/ctf-website/ctf_intake.py "${caseName}" --url "${target}" --root .
+python3 scripts/ctf-website/ctf_intake.py "${caseName}" --url "${target}" --root . --case-dir "${caseDir}" --case-name "${caseName}"
 \`\`\`
 
-然后定位实际生成的 \`cases/*/ai_manifest.json\`。如果 case 名因日期前缀不同导致路径不一致，以脚本输出为准，并在本轮报告中说明。
+该命令确保 manifest 固定为 \`${manifest}\`。如果旧 case 已存在且路径不同，以现有 manifest 为准，并在本轮报告中说明。
 
 如果 manifest 已存在，先读取它的 \`autopilot.last_round_id\`、\`next_actions\`、\`evidence\`、\`dead_ends\`，不要从头开始。
 
@@ -117,47 +137,23 @@ python3 scripts/ctf-website/ctf_autopilot.py ${manifest} --max-actions ${maxActi
 
 phase('阶段三：Agent 攻击网推进')
 
-const attackRound = await agent(
-  `现在作为 Web CTF Agent 做一轮有界攻击网推进。你不是只做提示词总结，要实际读取文件、运行安全探测命令、保存证据。
-
-## 输入
-
-Target: ${target}
-Case: ${caseName}
-Manifest: ${manifest}
-Autopilot result:
-${autopilot}
-
-## 约束
-
-1. 每发现一个信号（JWT、SQLi、SSRF、LFI、SSTI、CVE、upload、auth 等）先运行：
-   \`python3 scripts/ctf-website/kb_router.py "<signal>"\`
-   然后读取排名靠前的 KB 技术文件。
-2. 按 \`kb/ctf-website/techniques/attack-network.md\` 多路径推进。
-3. 本轮最多选择 2 条最高优先路径深入验证，避免无限发散。
-4. 所有证据落盘：
-   - raw request: \`exports/ctf-website/<case>/requests/\`
-   - notes: \`notes/ctf-website/<case>/\`
-   - report fragments: \`reports/ctf-website/<case>/\`
-5. 如果拿到 flag 或等价通关证据，写入本地 report，并在 \`ai_manifest.json\` 的 evidence 中记录 artifact 路径。
-6. 如果当前路径需要登录态、验证码、浏览器态或额外权限，不要等待人工；记录到 dead_ends 或 next_round_focus，然后自动切换其他攻击网路径。
-7. 只有全部路径耗尽或 24h 预算耗尽才返回 EXHAUSTED；否则继续返回 CONTINUE。
-
-## 输出
-
-返回 JSON，不要 Markdown：
-
-{
-  "status": "CONTINUE|DONE|EXHAUSTED",
-  "reason": "",
-  "manifest": "<实际 manifest 路径>",
-  "evidence_added": [],
-  "dead_ends_added": [],
-  "signals_seen": [],
-  "next_round_focus": []
-}`,
-  { label: 'attack-network-round', phase: '阶段三：Agent 攻击网推进' },
-)
+const attackRound = await workflow('ctf-attack-router', {
+  target,
+  caseName,
+  manifest,
+  signals: [autopilot],
+  focus: [checkpoint, autopilot],
+  maxWorkflows,
+  workerIds,
+  caseRoot,
+  reportRoot,
+  testOrigin,
+  redirectProbeHost,
+  ssrfProbeTargets,
+  credentialPairs,
+  forwardedIp,
+  execute,
+})
 
 phase('阶段四：写回与停止判断')
 
@@ -179,12 +175,16 @@ ${attackRound}
 
 1. 读取实际 \`ai_manifest.json\`。
 2. 如果 attack round 有 \`evidence_added\` / \`dead_ends_added\` / \`next_round_focus\`，合并到 manifest。
-3. 在 case 或 reports 目录写一份本轮摘要，例如 \`reports/ctf-website/<case>/loop-round-<timestamp>.md\`。
-4. 输出状态：
+3. 在 case 或 reports 目录写一份本轮摘要，例如 \`${reportRoot}/<case>/loop-round-<timestamp>.md\`。
+4. 写回后运行程序化状态判定：
+   \`\`\`bash
+   python3 scripts/ctf-website/ctf_loop_status.py <实际 manifest 路径> --write
+   \`\`\`
+5. 输出状态：
    - DONE：已拿到 flag / 已生成完整复现报告。
    - EXHAUSTED：预算耗尽、全路径耗尽、目标长期不可达或关键依赖缺失且无替代路径。
    - CONTINUE：仍有 next_round_focus 或 pending hypotheses。
-5. stopOnExhausted 当前为 ${stopOnExhausted}；如果 false，即使路径暂时耗尽也生成新的 recon/fingerprint/route-discovery 焦点并返回 CONTINUE。
+6. stopOnExhausted 当前为 ${stopOnExhausted}；如果 false，即使路径暂时耗尽也生成新的 recon/fingerprint/route-discovery 焦点并返回 CONTINUE。
 
 ## 最终输出格式
 
