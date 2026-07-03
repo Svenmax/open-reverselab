@@ -1,6 +1,6 @@
 # ReverseLab — Open-Source Reverse Engineering Lab & MCP Tool Ecosystem
 
-> 197-article knowledge base, 100+ MCP automation tools for reverse engineering.
+> 167-article knowledge base, 100+ MCP automation tools for reverse engineering.
 > Agent-native architecture. Covers CTF, APK, PE, cryptography, game cheating, and more.
 
 ## Quick Links
@@ -11,8 +11,9 @@
 - GitHub: https://github.com/LING71671/open-reverselab
 - Full LLM dump: https://ling71671.github.io/open-reverselab/llms-full.txt
 
-## CTF Website — Web 攻击全表面 (112 articles)
+## CTF Website — Web 攻击全表面 (113 articles)
 
+- [24h Loop Orchestration](https://ling71671.github.io/open-reverselab/kb/ctf-website/00-workflow/24h-loop-orchestration/)
 - [CAPTCHA Bypass Techniques and Automation](https://ling71671.github.io/open-reverselab/kb/ctf-website/01-recon/captcha-bypass/)
   >
 - [Cloudflare Bypass: Finding the Real Origin Server IP](https://ling71671.github.io/open-reverselab/kb/ctf-website/01-recon/cloudflare-bypass/)
@@ -359,5 +360,5 @@
   >
 
 ---
-Generated: 2026-07-02
-Total articles: 166
+Generated: 2026-07-03
+Total articles: 167

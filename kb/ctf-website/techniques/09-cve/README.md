@@ -18,7 +18,7 @@
 
 ### 11-dos — 拒绝服务（2）
 
-- [`01-valkey-resp-dos.md`](01-valkey-resp-dos.md) — Valkey RESP 协议预认证 DoS（CVE-2026-27623）
+- [`11-dos/01-valkey-resp-dos.md`](../11-dos/01-valkey-resp-dos.md) — Valkey RESP 协议预认证 DoS（CVE-2026-27623）
 - [`02-http2-bomb.md`](../08-infra/http2-attacks.md) — HTTP/2 HPACK 索引引用放大 + 流控停滞（CVE-2026-49975）
 
 ## 文档质量基线

@@ -1,13 +1,13 @@
-# CTF Website 渗透测试知识库 — Web 攻击全表面 97 篇
+# CTF Website 渗透测试知识库 — Web 攻击全表面 113 篇
 
-Web CTF / 授权网站安全技术库，共 **23 类、97 篇正文**。
+Web CTF / 授权网站安全技术库，共 **26 类、113 篇正文**。
 
 ## 入口
 
 - [完整技术索引](techniques/README.md)
 - [Web 攻击网](techniques/attack-network.md)
 - [前 30 分钟 Checklist](checklists/web-ctf-first-30-min.md)
-- [支付 CTF Playbook](checklists/payment-ctf-playbook.md)
+- [支付攻击技术目录](techniques/12-payment/README.md)
 
 ## 流程
 

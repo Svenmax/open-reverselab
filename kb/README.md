@@ -6,7 +6,7 @@ Reusable knowledge lives here. Unlike `notes/`, this is not per-case evidence; i
 
 | Area | Path | Content |
 |---|---|---|
-| Web CTF | [ctf-website](ctf-website/README.md) | 25 类 112 篇 — Web 攻击全表面 + CVE 实战 + DoS |
+| Web CTF | [ctf-website](ctf-website/README.md) | 26 类 113 篇 — Web 攻击全表面 + CVE 实战 + DoS |
 | APK Reverse | [apk-reverse](apk-reverse/README.md) | 8 类 17 篇 — APK/DEX 逆向 |
-| PE Reverse | [pe-reverse](pe-reverse/README.md) | Windows 本地代码执行 + PE 分析 |
+| PE Reverse | [pe-reverse](pe-reverse/README.md) | 9 类 19 篇 — Windows 本地代码执行 + PE 分析 |
 | General | [general](general/README.md) | 5 类 17 篇 — 密码学/协议/内核漏洞/方法论 |

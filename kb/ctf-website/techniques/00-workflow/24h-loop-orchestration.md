@@ -70,7 +70,22 @@ flowchart TD
 
 每轮深入多少条路径由 workflow 参数决定；未设置时按所有可用高价值路径推进。
 
-## 5. 状态语义
+## 5. 工作流闭环
+
+```text
+manifest 恢复点
+  -> ctf_autopilot.py 执行有界动作
+  -> Agent 按 attack-network 选择分支
+  -> kb_router / kb_read_file 读取技术文件
+  -> MCP 工具或脚本产生证据
+  -> 写回 evidence / dead_ends / next_actions
+  -> ctf_loop_status.py 输出 CONTINUE / DONE / EXHAUSTED
+```
+
+每轮必须保持“小步可恢复”：如果网络、目标、工具或登录态失败，只把该路径写入
+`dead_ends[]` 或 `next_actions[]`，不要重置 manifest，也不要丢弃已有证据。
+
+## 6. 状态语义
 
 | 状态 | 含义 |
 |---|---|
@@ -78,7 +93,19 @@ flowchart TD
 | `DONE` | `evidence[]` 中记录 flag/solve 证据 |
 | `EXHAUSTED` | 全部路径证据化失败、目标长期不可达或关键依赖缺失且无替代路径 |
 
-## 6. MCP 工具映射
+## 7. 证据与验证标准
+
+每轮完成前至少满足一项：
+
+- `evidence[]` 新增了可复查条目，包含命令、请求、响应摘要、截图路径或产物路径。
+- `dead_ends[]` 记录了失败路径和失败原因，能解释为什么暂不继续该分支。
+- `next_actions[]` 明确列出下一轮可执行动作，不只写“继续测试”。
+- `ctf_loop_status.py --write` 已更新 manifest 状态，并能输出 `STATUS:` 行。
+
+如果声称 `DONE`，必须有 flag、解题证明、关键响应、截图或报告路径；如果声称
+`EXHAUSTED`，必须列出已覆盖的攻击路径和阻塞证据。
+
+## 8. MCP 工具映射
 
 | 步骤 | MCP / 脚本 |
 |---|---|

@@ -120,7 +120,7 @@ def generate_llms_txt(articles: list[dict]) -> str:
     lines = []
     lines.append("# ReverseLab — Open-Source Reverse Engineering Lab & MCP Tool Ecosystem")
     lines.append("")
-    lines.append("> 197-article knowledge base, 100+ MCP automation tools for reverse engineering.")
+    lines.append(f"> {len(articles)}-article knowledge base, 100+ MCP automation tools for reverse engineering.")
     lines.append("> Agent-native architecture. Covers CTF, APK, PE, cryptography, game cheating, and more.")
     lines.append("")
     lines.append("## Quick Links")

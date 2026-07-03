@@ -30,11 +30,11 @@
 
 ### kernel — Linux 内核漏洞（5）
 
-- [`kernel/01-page-cache-write-family.md`](kernel/01-page-cache-write-family.md) — Page-Cache 写入家族：Copy Fail / Dirty Frag / Fragnesia
-- [`kernel/02-slab-cross-cache.md`](kernel/02-slab-cross-cache.md) — Slab 跨缓存释放（CVE-2026-31429）
-- [`kernel/03-mm-null-ptrace-bypass.md`](kernel/03-mm-null-ptrace-bypass.md) — mm-NULL ptrace check bypass / FD theft（CVE-2026-46333）
-- [`kernel/04-cifswitch-nss-privesc.md`](kernel/04-cifswitch-nss-privesc.md) — CIFSwitch cifs.spnego 身份混淆（QVD-2026-29453）
-- [`kernel/05-pintheft-io-uring-page-cache.md`](kernel/05-pintheft-io-uring-page-cache.md) — PinTheft: RDS zcopy double-free + io_uring 页缓存写入（QVD-2026-27616）
+- [`01-kernel/01-page-cache-write-family.md`](01-kernel/01-page-cache-write-family.md) — Page-Cache 写入家族：Copy Fail / Dirty Frag / Fragnesia
+- [`01-kernel/02-slab-cross-cache.md`](01-kernel/02-slab-cross-cache.md) — Slab 跨缓存释放（CVE-2026-31429）
+- [`01-kernel/03-mm-null-ptrace-bypass.md`](01-kernel/03-mm-null-ptrace-bypass.md) — mm-NULL ptrace check bypass / FD theft（CVE-2026-46333）
+- [`01-kernel/04-cifswitch-nss-privesc.md`](01-kernel/04-cifswitch-nss-privesc.md) — CIFSwitch cifs.spnego 身份混淆（QVD-2026-29453）
+- [`01-kernel/05-pintheft-io-uring-page-cache.md`](01-kernel/05-pintheft-io-uring-page-cache.md) — PinTheft: RDS zcopy double-free + io_uring 页缓存写入（QVD-2026-27616）
 
 ## 文档质量基线
 
