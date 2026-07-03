@@ -43,7 +43,7 @@ tags:
   - "advanced"
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: ["ctf-website/24-database/01-sqli-fundamentals", "ctf-website/12-payment/payment-race-lost-update", "ctf-website/13-signature/06-replay-nonce"]
+related_articles: ["ctf-website/24-database/01-sqli-fundamentals", "ctf-website/12-payment/payment-logic", "ctf-website/12-payment/payment-race-lost-update", "ctf-website/12-payment/payment-callback-async", "ctf-website/13-signature/06-replay-nonce"]
 ---
 # Advanced SQLi & WAF Bypass — 高级注入与绕过技术
 
@@ -457,6 +457,56 @@ WHERE orders.id=123;
 
 如果并发后出现 `delivered_at` 已写入但 `balance` 未扣、`pay_log` 重复但 `orders.status` 只变一次、或 `stock` 负数，直接转 `payment-race-lost-update.md`。Evidence 用 `race_sql_timeline.jsonl` 保存每轮并发的 SQL 观察值。
 
+### 10.4 支付账本字段优先级
+
+抽库时优先级不要按“表名好看”排，要按能不能推动支付链排。先拿能改变下一步动作的字段：订单归属、金额来源、签名材料、幂等键、发货条件。
+
+| 优先级 | 表/字段信号 | 立刻动作 | 输出文件 |
+|---|---|---|---|
+| P0 | `settings.pay_secret`, `merchant_key`, `webhook_secret` | 构造 provider 风格回调，做金额/状态覆盖 | `exports/sqli_pay_secret_chain.json` |
+| P0 | `orders.id/out_trade_no/user_id/status/amount` | 双账号 IDOR、回调绑定、发货接口 | `exports/sqli_order_pivot.csv` |
+| P0 | `payments.transaction_id/notify_id/provider/status` | 重放、大小写/空白/provider 变体 | `exports/sqli_notify_replay.csv` |
+| P1 | `entitlements/download_key/license_key/card_no` | 直连发货/下载/退信链 | `exports/sqli_delivery_keys.jsonl` |
+| P1 | `coupon_logs/wallet_logs/refund_logs` | 优惠叠加、退款残留、余额竞态 | `exports/sqli_wallet_ledger.csv` |
+| P2 | `notify_logs.raw_body/error_msg` | 复原签名串、隐藏字段、失败原因 | `exports/sqli_notify_raw.jsonl` |
+
+```python
+# sqli_payment_field_prioritizer.py
+import csv
+import re
+
+RULES = [
+    (0, re.compile(r"pay_secret|merchant_key|webhook_secret|sign_key", re.I), "forge_signed_notify"),
+    (0, re.compile(r"out_trade_no|orders?\.|order_id|amount|paid_at", re.I), "order_idor_callback_bind"),
+    (0, re.compile(r"transaction_id|notify_id|provider|payments?\.", re.I), "notify_replay_idempotency"),
+    (1, re.compile(r"download_key|license|card_no|entitlement|delivery", re.I), "delivery_takeover"),
+    (1, re.compile(r"coupon|wallet|balance|refund", re.I), "wallet_coupon_refund_chain"),
+    (2, re.compile(r"raw_body|error_msg|notify_log", re.I), "signature_string_recovery"),
+]
+
+def prioritize(findings, out_csv="exports/sqli_payment_field_priority.csv"):
+    rows = []
+    for finding in findings:
+        text = " ".join(str(x) for x in finding)
+        for prio, rx, action in RULES:
+            if rx.search(text):
+                rows.append({"priority": prio, "action": action, "finding": text})
+    rows.sort(key=lambda r: r["priority"])
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["priority", "action", "finding"])
+        w.writeheader()
+        w.writerows(rows)
+    return rows
+
+sample = [
+    ("payments", "order_id", "transaction_id", "paid_amount", "status"),
+    ("settings", "pay_secret"),
+]
+print(prioritize(sample))
+```
+
+下一跳规则：P0 字段不要等全库抽完，立刻转 `payment-logic.md` 跑回调/发货/IDOR；P1 字段转 `payment-digital-goods.md` 或 `payment-race-lost-update.md`；P2 字段用于补齐签名串和失败原因。
+
 ## 攻击链 / 工作流
 
 ```
@@ -479,6 +529,7 @@ WHERE orders.id=123;
 | OOB 注入 | DNS/HTTP/SMB listener 日志、唯一 token |
 | 非 SELECT 注入 | INSERT/UPDATE/ORDER BY/LIMIT 的最小触发语句 |
 | 支付状态机 | SQLi 观察到的订单/流水/余额/库存时间线 |
+| 支付字段优先级 | `sqli_payment_field_priority.csv`、字段来源、下一步动作、命中结果 |
 
 ## MCP 工具映射
 

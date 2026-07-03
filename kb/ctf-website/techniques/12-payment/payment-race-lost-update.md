@@ -14,10 +14,10 @@ signals: ["lost update", "余额扣减", "竞态条件", "read-modify-write", "T
 mcp_tools: ["kb_router", "http_probe"]
 keywords: ["lost update", "余额丢失", "竞态条件", "race condition", "TOCTOU", "并发一致性", "余额扣减绕过", "quota bypass"]
 difficulty: "advanced"
-tags: ["payment", "race-condition", "database", "concurrency", "web-security", "ctf"]
+tags: ["payment", "race-condition", "database", "concurrency", "ledger", "ctf"]
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: ["ctf-website/12-payment/payment-bypass"]
+related_articles: ["ctf-website/12-payment/payment-bypass", "ctf-website/12-payment/payment-logic", "ctf-website/24-database/02-sqli-advanced", "ctf-website/08-infra/race-cache-smuggling", "ctf-website/16-rate-limit/01-rate-limit-bypass"]
 ---
 # Payment Race / Lost Update — 余额扣减丢失更新
 
@@ -217,6 +217,47 @@ def classify_lost_update(before, after, usage_cost, ledger_rows):
     }
 ```
 
+### 7.1.2 SQL 时间线 Oracle
+
+如果同时存在 SQLi、日志泄露或后台导出，竞态不要只靠 HTTP 快照。把并发批次前、中、后的内部字段采出来，能直接看到“服务完成、余额没扣、流水缺失”的时间线。
+
+| 字段组 | SQL 观察值 | 命中信号 |
+|---|---|---|
+| 余额 | `users.balance/quota/credits/version/updated_at` | version 变了但余额回滚，或余额未按 cost 下降 |
+| 流水 | `wallet_logs.cost`, `payment_logs.transaction_id` | 成功服务数大于流水数 |
+| 权益 | `entitlements.created_at`, `delivery_logs.order_id` | 权益增加但 payment/order 未一致 |
+| 订单 | `orders.status`, `paid_at`, `delivered_at`, `refund_at` | paid/refunded/delivered 出现互斥组合 |
+| 库存 | `products.stock`, `card_keys.claimed_at` | stock 负数或同一卡密多次领取 |
+
+```python
+# lost_update_sql_timeline.py
+import json
+import time
+
+WATCH = {
+    "user": "SELECT CONCAT(balance,':',quota,':',version,':',updated_at) FROM users WHERE id={uid}",
+    "ledger": "SELECT COALESCE(SUM(cost),0) FROM wallet_logs WHERE user_id={uid}",
+    "orders": "SELECT COUNT(*) FROM orders WHERE user_id={uid} AND status IN ('paid','delivered')",
+    "entitlements": "SELECT COUNT(*) FROM entitlements WHERE user_id={uid}",
+}
+
+def sample(oracle, uid):
+    return {name: oracle(sql.format(uid=uid)) for name, sql in WATCH.items()}
+
+def timeline(oracle, uid, action, out="exports/lost_update_sql_timeline.jsonl"):
+    rows = []
+    rows.append({"phase": "before", "ts": time.time(), "db": sample(oracle, uid)})
+    action()
+    rows.append({"phase": "after_action", "ts": time.time(), "db": sample(oracle, uid)})
+    time.sleep(2)
+    rows.append({"phase": "after_settle", "ts": time.time(), "db": sample(oracle, uid)})
+    with open(out, "a", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+```
+
+看点：`after_action` 出现权益/服务完成，`after_settle` 余额或流水仍缺口，就是比单次 `GET /me` 更硬的证据。若 SQL 时间线显示 `version` 冲突或 `updated_at` 被资料写路径覆盖，直接转源码命中点定位。
+
 ### 7.2 常见误报
 
 | 现象 | 更可能的解释 | 验证 |
@@ -228,7 +269,7 @@ def classify_lost_update(before, after, usage_cost, ledger_rows):
 | PUT 200 很多 | handler 返回成功但无状态变化 | GET 回读更新字段和 `updated_at` |
 | XFF 后 429 减少 | 代理错误信任客户端头 | 单独记录为 rate-limit trust flaw，不等于 lost update |
 
-## 8. 白盒定位点
+## 8. 源码命中点
 
 搜索：
 
@@ -251,7 +292,7 @@ tx := db.Model(&User{}).
 return nil // 未检查 tx.Error / tx.RowsAffected
 ```
 
-稳定实现应只更新允许字段，并让扣减成为数据库原子操作：
+命中模式是“服务已经提供，但账本没有同步提交”。优先抓这些源码证据：整行保存、乐观锁 0 行未处理、扣费和发货不在同一事务、幂等键只写日志不约束业务。
 
 ```sql
 UPDATE users
@@ -259,18 +300,20 @@ SET quota = quota - :cost
 WHERE id = :id AND quota >= :cost;
 ```
 
-随后严格检查影响行数。需要乐观锁时，冲突必须有限次重读重算；订单、账单和 quota 变更应放在同一事务，并通过唯一约束/幂等键阻止重复结算。
+如果这一类 SQL 存在但调用层没有检查影响行数，就重点压并发窗口：一边制造 version/updated_at 冲突，一边观察服务账本与余额账本是否分离。
 
-## 9. 实现判定与回归不变量
+## 9. 攻击成功不变量
 
-1. Profile API 使用字段白名单更新，禁止把 quota、balance、role、version 从客户端对象带入。
-2. 扣减使用原子 SQL，或 `SELECT ... FOR UPDATE` 后在同一事务计算和提交。
-3. 检查 `RowsAffected == 1`；冲突重试耗尽必须让业务请求失败，不能“服务成功但未扣费”。
-4. 账单事件使用唯一 idempotency key，并将流水与余额更新原子提交。
-5. 不信任客户端提供的 `X-Forwarded-For`；仅由受信反代重写。
-6. 加入并发回归：同一用户 N 次成功服务后，余额变化必须等于账单流水之和。
+判断一条竞态链是否值得继续扩大，按这些不变量对齐：
 
-回归不变量：
+1. `successful_billable_requests` 大于 `committed_ledger.count`。
+2. `usage_cost` 大于 `initial_quota - final_quota`。
+3. `entitlements/delivery` 增加，但 `payments/orders` 未进入一致终态。
+4. `profile/settings` 写路径改变 `updated_at/version`，同时覆盖或吞掉计费字段。
+5. 同一 `transaction_id/notify_id/order_id` 的变体能产生多条业务副作用。
+6. 退款/取消后，权益、下载链接、卡密或余额没有回滚。
+
+账本不变量：
 
 ```text
 initial_quota - final_quota == SUM(committed_ledger.cost)
