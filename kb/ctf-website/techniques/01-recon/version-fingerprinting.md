@@ -14,7 +14,7 @@ keywords: ["版本指纹", "fingerprinting", "技术栈识别", "favicon hash", 
 difficulty: "beginner"
 tags: ["recon", "fingerprinting", "cve", "web-security", "technology-stack", "ctf"]
 language: "zh-CN"
-last_updated: "2026-06-25"
+last_updated: "2026-07-04"
 related_articles: []
 ---
 
@@ -23,6 +23,27 @@ related_articles: []
 ## 一句话原则
 
 > 不要信前端注释，信运行时行为。从 header → HTML → JS → 错误 → 文件 递进收束。
+
+## 输入信号
+
+- Header、cookie、HTML meta、JS bundle、favicon、错误页出现产品或框架痕迹
+- `package-lock.json`, `composer.lock`, `go.sum`, `requirements.txt` 可读
+- API 文档、sourcemap、静态资源路径暴露版本号
+- 错误页包含栈帧、模块路径、依赖版本或默认主题
+
+## 0. 置信度矩阵
+
+| 证据 | 置信度 | 用法 | 失败样本 |
+|------|--------|------|----------|
+| lockfile / package manifest | 高 | 直接提依赖版本 | 构建产物不是当前部署 |
+| 错误栈 module path | 高 | 精确框架/库版本 | 错误页被代理替换 |
+| JS sourcemap | 高 | 还原源码和 API | sourcemap 过期 |
+| favicon hash | 中 | 产品族识别 | 多产品共用默认图标 |
+| Header `Server` | 中 | Web server 粗指纹 | CDN/反代覆盖 |
+| HTML 注释/meta | 低 | 辅助线索 | 模板未更新 |
+| Wappalyzer 单点命中 | 低 | 作为候选 | 同类前端库误判 |
+
+指纹至少要两个独立来源交叉：例如 `laravel_session` + `.env` 路径 + `composer.lock`，或 `JSESSIONID` + Spring 错误栈 + `/actuator`。
 
 ## 速查指纹矩阵
 
@@ -231,6 +252,39 @@ wappalyzer https://target.com
 curl -s https://target.com/main.js | grep -oP '"[^"]+"' | grep -E '^"[@a-z]' | sort -u
 ```
 
+## 指纹归并与下一跳
+
+```python
+import json
+import re
+from collections import defaultdict
+
+NEXT_HOP = {
+    "Laravel": ["04-config-exposure", "payment-php", "deserialization"],
+    "Spring": ["ssti", "grpc-protobuf", "kubernetes-container"],
+    "WordPress": ["payment-php", "file-upload-xxe-lfi"],
+    "Magento": ["payment-php", "graphql"],
+    "Redis": ["03-nosql-injection", "ssrf"],
+    "phpMyAdmin": ["04-config-exposure", "01-sqli-fundamentals"],
+}
+
+def merge_fingerprints(items):
+    scores = defaultdict(int)
+    evidence = defaultdict(list)
+    for item in items:
+        src = item.get("source", "")
+        text = json.dumps(item, ensure_ascii=False)
+        weight = 3 if re.search(r"lock|error|sourcemap", src, re.I) else 1
+        for product in NEXT_HOP:
+            if re.search(product, text, re.I):
+                scores[product] += weight
+                evidence[product].append(item)
+    return [
+        {"product": p, "score": s, "next": NEXT_HOP[p], "evidence": evidence[p][:3]}
+        for p, s in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+```
+
 ## MCP 工具映射
 
 AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
@@ -252,3 +306,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
 - 固定 session、输入、并发参数和时间窗口重放，记录成功响应、失败样本和下一跳。
 - 输出统一放入 `exports/ctf-website/<case>/`，凭据只用 `REDACTED` 占位，自动检索 `flag{}`、`CTF{}`、`DASCTF{}`。
+- `fingerprints.json`: source、product、version、confidence、raw evidence。
+- `fingerprint-next-hop.json`: 产品/版本、置信度、关联 CVE/KB 文档、复测结果。
+- 成功样本: 两个以上独立信号指向同一产品/版本，且对应端点/行为可复测。
+- 失败样本: Header 与应用行为冲突、静态资源缓存旧版本、CDN 默认错误页误导。

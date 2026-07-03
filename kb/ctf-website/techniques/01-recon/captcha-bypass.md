@@ -14,7 +14,7 @@ keywords: ["captcha bypass", "验证码绕过", "recaptcha", "ddddocr", "2captch
 difficulty: "intermediate"
 tags: ["captcha", "automation", "web-security", "recon", "ctf"]
 language: "zh-CN"
-last_updated: "2026-06-25"
+last_updated: "2026-07-04"
 related_articles: []
 ---
 
@@ -23,6 +23,24 @@ related_articles: []
 ## 场景
 
 目标站点使用 CAPTCHA 对人机交互、登录、注册、支付等关键操作进行防护。需要识别验证码类型，选择对应的绕过方案，实现自动化测试或批量操作。
+
+## 输入信号
+
+- `/captcha`, `/verify`, `/sms/send`, `/turnstile`, `/recaptcha` 等接口出现
+- 登录/注册/下单/支付前置 CAPTCHA，但后端状态变化接口可单独调用
+- 响应中有 `captcha_id`, `challenge`, `lot_number`, `pass_token`, `sitekey`
+- 同一 token 在多个请求、多个账号或长时间窗口内仍然有效
+- CAPTCHA 前端通过后，服务端只看 localStorage/cookie/隐藏字段
+
+## 0. 绕过判定矩阵
+
+| 类型 | 关键字段 | 优先打法 | 成功样本 | 失败样本 |
+|------|----------|----------|----------|----------|
+| 图片/OCR | `captcha_id`, image URL | 识别 + 重放窗口 | 同一答案多次通过 | 答案一次性绑定 session |
+| 滑块/点选 | `challenge`, `validate` | 复用 token / 前端 Hook | token 可跨接口复用 | token 绑定轨迹和时间 |
+| reCAPTCHA/Turnstile | `sitekey`, token | 测试 key / solver / token 生命周期 | token 被后端接受 | `timeout-or-duplicate` |
+| 短信码 | phone, scene, code | 绑定关系/并发窗口 | A 码验证 B 账号 | code 绑定 phone+scene |
+| 前端逻辑 | localStorage/cookie hidden field | 删除参数/伪造通过状态 | 不带 captcha 仍成功 | 服务端二次校验 |
 
 ## 验证码类型识别
 
@@ -167,7 +185,35 @@ captcha = session.get("https://target.com/captcha?t=" + str(time.time()))
 # 之后用相同 captcha_id 提交任意次数
 ```
 
-### 5d. 固定验证码（开发/测试模式）
+### 5d. CAPTCHA enforcement diff
+
+```python
+import json
+import requests
+
+def captcha_enforcement_matrix(base, action_path, payload):
+    s = requests.Session()
+    variants = [
+        ("baseline", payload),
+        ("no_captcha", {k: v for k, v in payload.items() if "captcha" not in k.lower()}),
+        ("empty_captcha", {**payload, "captcha": "", "captcha_id": ""}),
+        ("array_captcha", {**payload, "captcha": ["x"], "captcha_id": ["x"]}),
+        ("reused_token", {**payload, "captcha_token": payload.get("captcha_token", "REUSE")}),
+    ]
+    rows = []
+    for name, body in variants:
+        r = s.post(base.rstrip("/") + action_path, json=body, timeout=8, allow_redirects=False)
+        rows.append({
+            "case": name,
+            "status": r.status_code,
+            "len": len(r.text),
+            "body": r.text[:240],
+            "set_cookie": r.headers.get("Set-Cookie", ""),
+        })
+    print(json.dumps(rows, ensure_ascii=False, indent=2))
+```
+
+### 5e. 固定验证码（开发/测试模式）
 
 ```bash
 # 尝试测试密钥
@@ -242,3 +288,11 @@ page.evaluate("() => { delete window.chrome.runtime }")
 | HTTP 探测验证码端点 | `http_probe` | 探测 /captcha /verify 接口 |
 | 按信号查知识库 | `kb_router` | 搜索 captcha bypass / recaptcha 技术文件 |
 | 浏览器自动化 | `toolbox_launch` + Playwright | 启动浏览器进行交互式 CAPTCHA 处理 |
+
+## Evidence
+
+- `captcha_surface.json`: captcha 类型、sitekey/challenge/captcha_id、绑定的 action、token TTL。
+- `captcha_enforcement_matrix.json`: baseline、删除参数、空值、数组值、重放 token 的响应差异。
+- `solver_trace.har`: 获取 challenge、提交 token、业务 action 的完整请求顺序。
+- 成功样本: 无验证码/旧 token/跨账号 token 仍能触发登录、注册、下单、支付或 flag。
+- 失败样本: token 过期、绑定 session/phone/action、服务端返回 `timeout-or-duplicate` 或重置 challenge。
