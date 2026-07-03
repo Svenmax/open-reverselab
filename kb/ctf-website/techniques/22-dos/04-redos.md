@@ -331,7 +331,7 @@ Rust     regex       DFA 引擎                 极低
 7. "Static Analysis for Regular Expression Exponential Runtime via Substructural Logics" — 2016
 8. OWASP: Regular expression Denial of Service - ReDoS
 9. rxxr: ReDoS static analysis tool (JavaScript)
-10. "ReDoS 检测与防御" — OWASP Cheat Sheet Series
+10. "ReDoS 检测与对抗" — OWASP Cheat Sheet Series
 
 ## MCP 工具映射
 
@@ -341,7 +341,7 @@ Rust     regex       DFA 引擎                 极低
 | 正则分析 | `kb_router` | 搜索 redos / regex_dos / regular_expression |
 | 技术查阅 | `kb_read_file` | 读取本文件完整攻击方法 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

@@ -180,7 +180,7 @@ grep -v -F -f cloudflare_ips.txt all_ips.txt > candidate_ips.txt
 | 按信号查知识库 | `kb_router` | 搜索 cloudflare bypass 等相关技术 |
 | 子域名爆破 | `run_ctf_tool dirsearch` 或 ffuf | 枚举子域名获取更多 IP |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

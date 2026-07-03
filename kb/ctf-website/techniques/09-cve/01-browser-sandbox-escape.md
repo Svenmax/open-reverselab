@@ -48,7 +48,7 @@ class FontFeatureValuesMapIterationSource {
 
 迭代过程中调用 `map.delete()` + `map.set()` 触发 HashMap rehash → 旧存储区释放 → `aliases_` 悬空 → `FetchNextItem()` 访问已释放内存 → **UAF**。
 
-### 修复方案
+### Patch 方案
 
 ```cpp
 // 修复后：值拷贝，rehash 不影响副本

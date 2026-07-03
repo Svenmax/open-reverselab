@@ -206,6 +206,33 @@ def scan_log(text):
 
 日志里看到 `SELECT ... WHERE username='x'`，可以反推注入闭合方式；看到 `INSERT INTO users`，可以直接定位用户表字段顺序。
 
+### 3.4 从日志反推 SQLi payload
+
+日志里的 SQL 模板是最好的 payload 生成器。不要只搜 `password`，还要搜支付表的订单号、金额、卡密、回调字段。
+
+| 日志片段 | SQL 上下文 | Payload 方向 |
+|----------|------------|--------------|
+| `WHERE id = 123` | 整数条件 | `1 AND 1=2`、`UNION SELECT` |
+| `WHERE email = 'a@b.com'` | 字符串条件 | `' AND '1'='2`、报错函数 |
+| `ORDER BY created_at desc` | 排序上下文 | `CASE WHEN(...) THEN created_at ELSE id END` |
+| `LIMIT 20 OFFSET 0` | 分页上下文 | 超大/负数/子查询表达式 |
+| `INSERT INTO orders (...) VALUES (...)` | 写入上下文 | 二阶注入、字段错位 |
+| `UPDATE orders SET status='paid'` | 支付状态更新 | 状态机与回调重放 |
+
+```python
+import re
+
+SQL_RX = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.{0,600}", re.I | re.S)
+PAY_FIELDS = re.compile(r"(order|trade|amount|price|paid|status|coupon|card|key|token|flag)", re.I)
+
+def extract_sql_templates(log_text):
+    for m in SQL_RX.finditer(log_text):
+        sql = " ".join(m.group(0).split())
+        score = len(PAY_FIELDS.findall(sql))
+        if score:
+            print(f"[score={score}] {sql[:500]}")
+```
+
 ## 4. 安装文件残留
 
 ### 4.1 安装目录
@@ -326,16 +353,58 @@ def summarize_sql_dump(path):
 
 遇到大 dump：先 `rg -n "flag\\{|CTF\\{|admin|password|token|secret" dump.sql`，再按表拆分；不要先整库导入。
 
+### 6.3 支付/发卡表定位
+
+支付题拿到 dump 后，优先找“订单账本”和“权益账本”的断点：订单表、支付流水表、卡密表、优惠券表、发货表。
+
+```python
+import re
+from pathlib import Path
+
+TABLE_HINTS = re.compile(
+    r"(order|trade|payment|pay_|invoice|refund|coupon|voucher|card|kami|cdk|license|"
+    r"goods|product|sku|plan|subscription|vip|balance|wallet|credit|flag)",
+    re.I,
+)
+
+CREATE_RX = re.compile(r"CREATE TABLE [`\"]?([^`\"\s(]+)[^;]+;", re.I | re.S)
+INSERT_RX = re.compile(r"INSERT INTO [`\"]?([^`\"\s(]+)[^;]+;", re.I | re.S)
+
+def payment_dump_map(path):
+    text = Path(path).read_text(errors="ignore")
+    tables = {}
+    for rx, kind in ((CREATE_RX, "schema"), (INSERT_RX, "sample")):
+        for name, body in rx.findall(text):
+            if TABLE_HINTS.search(name) or TABLE_HINTS.search(body):
+                item = tables.setdefault(name, {})
+                item[kind] = " ".join(body[:800].split())
+    for name, item in sorted(tables.items()):
+        print("\n==", name, "==")
+        print("[schema]", item.get("schema", "")[:600])
+        print("[sample]", item.get("sample", "")[:600])
+```
+
+字段优先级：
+
+| 表/字段 | 价值 |
+|---------|------|
+| `orders.status`, `orders.pay_status`, `paid_at` | 判断状态机终态 |
+| `orders.amount`, `pay_amount`, `total_fee` | 判断分/元、精度、折扣 |
+| `out_trade_no`, `transaction_id`, `notify_id` | 回调重放和幂等键 |
+| `card_key`, `kami`, `cdk`, `download_url` | 虚拟商品发货 |
+| `coupon.used`, `balance_log`, `wallet_log` | 重复使用与账本差异 |
+| `users.vip_until`, `subscription_until`, `credits` | 权益到账与残留 |
+
 ## 攻击链 / 工作流
 
 ```
 1. 从站点名、目录名、时间戳、部署习惯生成备份候选路径
 2. 探测 .sql/.dump/.zip/.tar.gz/.bak/.old/.log/.git 等静态资源
 3. 对命中文件先记录响应头、大小、hash，再下载到隔离目录分析
-4. 解压/解析后提取 schema、用户表、订单表、日志中的 SQL/Token/错误栈
+4. 解压/解析后提取 schema、用户表、订单表、支付流水、卡密表、日志中的 SQL/Token/错误栈
 5. 关联配置泄露与源码恢复：定位数据库连接、后台路径、框架版本
 6. 对 Git 泄露执行最小恢复，确认源码/配置/历史提交是否含敏感信息
-7. 输出影响面：泄露表、时间范围、字段类型、可独立使用资产和下一跳入口
+7. 输出影响面：泄露表、时间范围、字段类型、订单/权益账本和下一跳入口
 ```
 
 ## Evidence
@@ -346,6 +415,7 @@ def summarize_sql_dump(path):
 | 完整性 | SHA256、文件大小、解压后的文件列表 |
 | 数据内容 | 表名、字段名、样例行、日志关键片段 |
 | 源码恢复 | `.git/HEAD`、恢复提交、敏感文件路径 |
+| 支付账本 | 订单表、支付流水表、卡密/权益表、状态字段和金额字段 |
 
 ## MCP 工具映射
 

@@ -166,7 +166,7 @@ class OAuthStateAttack:
         # 3. 诱导受害者访问该 URL
         # 4. 服务端用 ATTACKER_CODE 交换 token → 受害者账号绑定了攻击者的 OAuth 账号
         
-        # 防御: state 参数绑定到用户 session
+        # 对抗: state 参数绑定到用户 session
         # 如果 state 缺失或可预测 → CSRF 攻击
         
         return {
@@ -363,7 +363,7 @@ http.createServer((req, res) => {
 # response_type_switch.py — 切换 response_type 绕过
 
 # OAuth 2.0 支持多种 response_type:
-# code      → Authorization Code Flow (最安全，带 PKCE)
+# code      → Authorization Code Flow (最严格，带 PKCE)
 # token     → Implicit Flow (已弃用，危险)
 # id_token  → OpenID Connect implicit flow
 # code token → Hybrid Flow (混合)

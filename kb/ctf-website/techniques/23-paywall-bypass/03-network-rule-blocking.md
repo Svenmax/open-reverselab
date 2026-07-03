@@ -462,7 +462,7 @@ ext_api.webRequest.onBeforeRequest.addListener(
 - [05-dom-css-manipulation](05-dom-css-manipulation.md) — DOM 操作
 - [race-cache-smuggling](../08-infra/race-cache-smuggling.md) — Web Cache Poisoning
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。

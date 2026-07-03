@@ -3,7 +3,7 @@ id: "ctf-website/02-auth/jwt/07-theft-replay"
 title: "JWT 窃取、重放与持久化"
 title_en: "JWT Theft, Replay, and Persistence"
 summary: >
-  全面分析 JWT Token 的泄露途径与攻击方法，包括 XSS 窃取 Token、URL Token 泄露、明文传输截获、Token 重放及登出后无法撤销等问题。覆盖客户端存储安全、Referer 泄露、Cookie 安全属性和重放检测等防御要点。
+  全面分析 JWT Token 的泄露途径与攻击方法，包括 XSS 窃取 Token、URL Token 泄露、明文传输截获、Token 重放及登出后无法撤销等问题。覆盖客户端存储安全、Referer 泄露、Cookie 安全属性和重放检测等对抗要点。
 summary_en: >
   A comprehensive analysis of JWT token leakage pathways and attacks including XSS token theft, URL token leakage, plaintext transmission interception, token replay, and lack of revocation after logout. Covers client-side storage security, Referer leakage, cookie security attributes, and replay detection.
 board: "ctf-website"
@@ -291,7 +291,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

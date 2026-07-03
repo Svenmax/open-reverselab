@@ -264,6 +264,7 @@ Java RMI → JRMPListener → 反弹连接 → RCE
 .NET ViewState → ysoserial.net → ObjectDataProvider → cmd 执行
 Ruby YAML → ERB gadget → `id` → RCE
 YAML 反序列化 → 文件读取 → .env → 数据库密码 → 数据泄露
+```
 
 ## 9. Advanced Deserialization (2024-2025)
 
@@ -315,7 +316,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | 反序列化端点探测 | `http_probe` | HTTP GET 探测反序列化入口点 |
 | 知识检索 | `kb_router` | 按反序列化攻击信号搜索知识库 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

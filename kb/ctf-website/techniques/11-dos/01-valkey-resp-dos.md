@@ -50,7 +50,7 @@ with socket.create_connection(("target", 6379)) as s:
 | handleParseResults | `PING\r\n` | `MULTIBULK` | `resetClient`，旧版不清 `reqtype` | `reqtype` 仍为 MULTIBULK |
 | 第二次 parseInputBuffer | `PING\r\n` | `MULTIBULK` | 跳过类型检测，仍走 multibulk | **`qb_pos` 处是 `P`，断言失败** |
 
-### 修复 diff
+### Patch diff
 
 ```c
 // handleParseResults 中的 NEGATIVE_MBULK_LEN 分支

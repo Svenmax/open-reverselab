@@ -933,13 +933,13 @@ if __name__ == "__main__":
         print("[*] Try: different param style, longer max_len, different endpoint")
 ```
 
-## 10. 检测与防御
+## 10. 检测与对抗
 
-### 10.1 服务端防御方案
+### 10.1 服务端对抗方案
 
 ```python
 """
-防御 hash length extension 的方法：
+对抗 hash length extension 的方法：
 
 1. 使用 HMAC 替代裸 Hash：
    安全:   HMAC-MD5(secret, message)

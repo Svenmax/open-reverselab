@@ -318,7 +318,7 @@ print(f"[+] 导出 {len(targets)} 条资产")
 | HTTP 探测确认资产存活 | `http_probe` | 验证 FOFA 资产是否存活 |
 | 按信号查知识库 | `kb_router` | 搜索 fofa recon 等相关技术 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。

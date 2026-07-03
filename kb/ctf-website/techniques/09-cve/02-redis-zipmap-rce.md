@@ -3,7 +3,7 @@ id: "ctf-website/09-cve/02-redis-zipmap-rce"
 title: "Redis/Valkey RESTORE：zipmap 长度前缀步长不一致（CVE-2026-25243）"
 title_en: "Redis/Valkey RESTORE: zipmap Length Prefix Step Mismatch (CVE-2026-25243)"
 summary: >
-  Redis/Valkey RESTORE命令zipmap处理漏洞分析，zipmapValidateIntegrity（校验）和zipmapNext（迭代）对overlong长度前缀前进步长不一致，差4字节导致第二次迭代时堆越界读。涵盖zipmap长度编码规则、RDB type 9沿用原因、触发载荷构造、完整调用链，以及通过canonical检查拒绝overlong编码的修复原理。
+  Redis/Valkey RESTORE命令zipmap处理漏洞分析，zipmapValidateIntegrity（校验）和zipmapNext（迭代）对overlong长度前缀前进步长不一致，差4字节导致第二次迭代时堆越界读。涵盖zipmap长度编码规则、RDB type 9沿用原因、触发载荷构造、完整调用链，以及通过canonical检查拒绝overlong编码的Patch 原理。
 summary_en: >
   Analysis of a Redis/Valkey RESTORE command zipmap processing vulnerability where zipmapValidateIntegrity (validation) and zipmapNext (iteration) disagree on overlong length prefix step size, causing a 4-byte discrepancy leading to heap out-of-bounds read on the second iteration. Covers zipmap length encoding rules, why RDB type 9 persists, trigger payload construction, full call chain, and the fix through canonical encoding checks.
 board: "ctf-website"
@@ -48,7 +48,7 @@ Valkey / Redis 全部版本。修复提交：Valkey `fea0b4064`（2026-05-05，P
 
 RDB_TYPE_HASH_ZIPMAP = 9，`rdbLoadObject` 中对应分支仍会调用 `zipmapValidateIntegrity` + `zipmapNext`。
 
-### 修复原理
+### Patch 原理
 
 ```c
 // zipmapValidateIntegrity 中增加 canonical 检查

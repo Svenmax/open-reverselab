@@ -174,7 +174,7 @@ class CordovaConfigScanner:
 ### InAppBrowser Abuse
 
 ```javascript
-// InAppBrowser — 最危险的 Cordova 插件之一
+// InAppBrowser — 最高价值的 Cordova 插件之一
 // 允许应用内打开 Web 页面
 // 但 executeScript 方法可在任意已加载页面执行 JS
 

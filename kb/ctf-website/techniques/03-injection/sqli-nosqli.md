@@ -395,7 +395,6 @@ def session_splice(requests_parts: list[str]):
         session = requests.Session()
         session.post(target, data={"q": part})
 ```
-```
 
 ## Evidence
 

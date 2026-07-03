@@ -360,7 +360,7 @@ function quic_cid_exhaust(target, cid_count=1000000):
 | 技术搜索 | `kb_router` | 搜索 http2 / h2 / continuation / rapid_reset |
 | CVE 查阅 | `kb_read_file` | 读取本文件及 01-application-layer-dos (Rapid Reset) |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

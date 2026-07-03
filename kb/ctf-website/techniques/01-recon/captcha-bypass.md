@@ -221,7 +221,7 @@ requests.post("https://target.com/verify", data={
 6. 自动化 → Playwright + Stealth + Capsolver 扩展
 ```
 
-## 防御绕过检测
+## 对抗点绕过检测
 
 ```python
 # 检测自动化框架

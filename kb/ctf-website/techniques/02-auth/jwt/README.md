@@ -13,7 +13,7 @@
 | 06 | `06-claim-missing.md` | Claim缺失+混用 | exp/aud/iss未验证，ID Token当Access Token |
 | 07 | `07-theft-replay.md` | 窃取与重放 | XSS/日志/Referer泄露 + 无撤销 |
 | 08 | `08-cve-library.md` | CVE/依赖库 | 10个高危CVE + 指纹识别 + 利用决策树 |
-| 09 | `09-toolchain-defense.md` | 工具链+防御 | jwt_tool/流程/一键脚本/防御矩阵 |
+| 09 | `09-toolchain-defense.md` | 工具链+对抗 | jwt_tool/流程/一键脚本/对抗矩阵 |
 
 ## 快速使用
 

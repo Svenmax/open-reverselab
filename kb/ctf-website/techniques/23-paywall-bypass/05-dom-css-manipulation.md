@@ -614,7 +614,7 @@ if (matchUrlDomain([
 - [admin-bot-xss](../07-client/admin-bot-xss.md) — DOM Clobbering / MutationObserver 通用技巧
 - [js-runtime](../07-client/js-runtime.md) — JS 运行时 Hook
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。

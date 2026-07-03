@@ -321,11 +321,11 @@ class DNSAmplificationScanner:
 # results = asyncio.run(scanner.scan_network(resolvers))
 ```
 
-### DNS 放大防御
+### DNS 放大对抗
 
 ```python
 class DNSAmplificationMitigation:
-    """DNS 放大防御措施 — 服务端"""
+    """DNS 放大对抗措施 — 服务端"""
 
     @staticmethod
     def configure_response_rate_limiting(bind_config_path: str) -> str:
@@ -515,7 +515,7 @@ async def memcached_amplification(server: str,
         sock.close()
 ```
 
-### Memcached 防御
+### Memcached 对抗
 
 ```python
 class MemcachedPathCheck:
@@ -1022,7 +1022,7 @@ class AttackCapacityCalculator:
   9. 流量汇聚到受害者上行链路
   10. 链路饱和 → 正常流量丢弃
 
-防御失效:
+拦截失效:
   11. ISP 级 ACL 对伪源 IP 无效 (BCP38 未部署)
   12. Cloudflare/AWS Shield 需要 on-ramp 时间
   13. 流量来自 10 万+ 不同源 AS → BGP Flowspec 规则数量爆炸
@@ -1053,7 +1053,7 @@ class AttackCapacityCalculator:
 12. "A survey of DDoS amplification attacks" — Ryba et al., 2015
 13. Open resolver project: openresolverproject.org
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

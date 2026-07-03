@@ -198,7 +198,7 @@ Java 模板引擎可以通过实例化 Java Runtime 类直接执行命令：
     # 通用执行命令: product.getClass().forName("java.lang.Runtime")...
     ${product.getClass().forName("java.lang.Runtime").getMethod("getRuntime").invoke(null).exec("whoami")}
     ```
-    原理：Model Bean 不经 `TemplateClassResolver`，getter 方法自由可调。防御需用 `TemplateModel` 接口包装 model 对象，而非仅依赖 `?new()` 拦截。
+    原理：Model Bean 不经 `TemplateClassResolver`，getter 方法自由可调。对抗需用 `TemplateModel` 接口包装 model 对象，而非仅依赖 `?new()` 拦截。
 
 ---
 

@@ -177,7 +177,7 @@ function nxdomain_flood(target_domain, qps=30000, duration_sec=600):
     """
     NXDOMAIN flood — 大量查询不存在的子域
     
-    防御难点:
+    对抗难点:
       - 无恶意 payload，全是合法 DNS 查询
       - 源 IP 来自合法递归器 (而非攻击者直接发包)
       - 每个子域不同 → rate limit 按子域分别计数无效
@@ -365,7 +365,7 @@ DNSSEC DoS:    攻击 DNS 服务器本身
 | 技术搜索 | `kb_router` | 搜索 dns_dos / water_torture / phantom |
 | 技术查阅 | `kb_read_file` | 读取本文件及 03-amplification-drdos |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

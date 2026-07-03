@@ -155,7 +155,7 @@ fetch('https://target.com/api/transfer', {
 ```
 SameSite=Lax:   GET 导航会发 cookie，POST 不发的 → 找 GET 可触发的状态变更
 SameSite=None:  无保护，但必须 Secure=true (HTTPS)
-SameSite=Strict: 最安全，同站才发
+SameSite=Strict: 最严格，同站才发
 
 SameSite Lax 绕过:
   - GET /api/deleteUser?id=1 → 状态变更在 GET 上
@@ -190,7 +190,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 | 知识检索 | `kb_router` | 按 CORS/CSRF 信号搜索知识库 |
 ```
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

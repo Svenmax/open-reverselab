@@ -1397,13 +1397,13 @@ if __name__ == "__main__":
 | 大量 nonce 后旧的可用 | 超过 10000 个请求后 earliest 可重放 | 表耗尽 |
 | 签名绑定了 nonce 但 nonce 可预测 | sign = MD5(key + nonce + data) | 先预测 nonce 再算签名 |
 
-## 9. 防御方案
+## 9. 对抗方案
 
 ```python
-# 服务端正确的 nonce + timestamp 防御
+# 服务端正确的 nonce + timestamp 对抗
 
 """
-防御 checklist:
+对抗 checklist:
 
 [必需]
 1. Nonce 唯一性: 每个 nonce 只能使用一次，存储已用 nonce
@@ -1478,7 +1478,7 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 采集合法签名样本 → 还原 canonicalization → 锁定算法/密钥/nonce 假设 → 单变量变异 → 服务端 oracle 验证 → 重放或伪造链。
 
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

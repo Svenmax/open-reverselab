@@ -24,7 +24,7 @@ related_articles: ["ctf-website/15-mass-assignment/02-parameter-tampering", "ctf
 
 ## 场景
 
-Mass Assignment（批量赋值/属性注入）发生于后端框架自动将请求参数绑定到模型属性时，未显式定义 allowlist（白名单）或 blocklist（黑名单），导致攻击者可以覆盖模型上不应由用户控制的属性。Laravel `$fillable`、Rails `strong_parameters`、Spring Boot `@ModelAttribute`、Django `ModelForm` 等均有不同形式的 mass assignment 防御，但每个框架都有自己的绕过方式。
+Mass Assignment（批量赋值/属性注入）发生于后端框架自动将请求参数绑定到模型属性时，未显式定义 allowlist（白名单）或 blocklist（黑名单），导致攻击者可以覆盖模型上不应由用户控制的属性。Laravel `$fillable`、Rails `strong_parameters`、Spring Boot `@ModelAttribute`、Django `ModelForm` 等均有不同形式的 mass assignment 对抗，但每个框架都有自己的绕过方式。
 
 ## 输入信号
 

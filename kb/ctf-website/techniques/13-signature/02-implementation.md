@@ -1449,7 +1449,7 @@ def null_byte_truncation():
     // PHP: file_get_contents("/etc/passwd\\x00.jpg") → /etc/passwd (PHP < 5.3)
     // 如果签名参数包含路径 → 路径截断 → 读任意文件
 
-    // ===== 防御 =====
+    // ===== 对抗 =====
     // 始终在签名计算前 sanitize 输入
     // 移除或转义 null 字节
     // 使用固定编码 (如 hex 或 base64) 而非原始字节

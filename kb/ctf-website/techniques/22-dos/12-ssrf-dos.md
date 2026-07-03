@@ -527,7 +527,7 @@ Phase 5 — 循环耗尽:
 | 技术搜索 | `kb_router` | 搜索 ssrf / gopher / redis / internal |
 | 技术查阅 | `kb_read_file` | 读取本文件及 04-ssrf 分类下的 SSRF 技术 |
 
-## 证据与验证闭环
+## Evidence
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。

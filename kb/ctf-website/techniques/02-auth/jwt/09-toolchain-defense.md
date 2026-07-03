@@ -1,16 +1,16 @@
 ---
 id: "ctf-website/02-auth/jwt/09-toolchain-defense"
-title: "JWT 工具链、攻击流程与防御矩阵"
+title: "JWT 工具链、攻击流程与对抗矩阵"
 title_en: "JWT Toolchain, Attack Workflow, and Defense Matrix"
 summary: >
-  汇总 JWT 攻击的完整工具链（jwt_tool、hashcat、jwt-cracker、Burp JWT Editor 等）、标准化五阶段攻击流程（信息收集、漏洞扫描、密钥获取、Token 伪造、验证利用）以及服务端/客户端/传输层的全面防御矩阵。
+  汇总 JWT 攻击的完整工具链（jwt_tool、hashcat、jwt-cracker、Burp JWT Editor 等）、标准化五阶段攻击流程（信息收集、漏洞扫描、密钥获取、Token 伪造、验证利用）以及服务端/客户端/传输层的全面对抗矩阵。
 summary_en: >
   A complete reference for JWT attack toolchain (jwt_tool, hashcat, jwt-cracker, Burp JWT Editor), standardized five-phase attack workflow (recon, scanning, key acquisition, token forging, verification), and a comprehensive defense matrix covering server, client, and transport layers.
 board: "ctf-website"
 category: "02-auth"
-signals: ["jwt_tool", "hashcat", "工具链", "攻击流程", "防御矩阵", "JWT", "jwt-cracker", "Burp"]
+signals: ["jwt_tool", "hashcat", "工具链", "攻击流程", "对抗矩阵", "JWT", "jwt-cracker", "Burp"]
 mcp_tools: ["http_probe", "ctf_tool_status"]
-keywords: ["JWT工具链", "jwt_tool", "hashcat jwt", "JWT防御", "token安全", "JWT最佳实践", "jwt攻击流程"]
+keywords: ["JWT工具链", "jwt_tool", "hashcat jwt", "JWT对抗", "token安全", "JWT最佳实践", "jwt攻击流程"]
 difficulty: "intermediate"
 tags: ["authentication", "jwt", "toolchain", "defense", "web-security", "best-practices", "ctf"]
 language: "zh-CN"
@@ -18,7 +18,7 @@ last_updated: "2026-06-25"
 related_articles: []
 ---
 
-# JWT 工具链、攻击流程与防御矩阵
+# JWT 工具链、攻击流程与对抗矩阵
 
 ## 1. 完整工具链
 
@@ -234,7 +234,7 @@ python3 jwt_tool.py <original> -X n -I -pc "role" -pv "admin"
 
 ---
 
-## 5. 防御矩阵
+## 5. 对抗矩阵
 
 ### 服务端
 
@@ -292,5 +292,5 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 
 | 攻击步骤 | MCP 工具 | 说明 |
 |---------|---------|------|
-| 防御措施验证 | `http_probe` | HTTP GET 探测验证 JWT 防御配置 |
+| 对抗措施验证 | `http_probe` | HTTP GET 探测验证 JWT 对抗配置 |
 | jwt_tool 工具检查 | `ctf_tool_status` | 检查 CTF 工具安装状态 |
