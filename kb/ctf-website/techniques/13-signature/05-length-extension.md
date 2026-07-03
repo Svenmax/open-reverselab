@@ -4,25 +4,61 @@ title: "Hash Length Extension 攻击 — 深度技术手册"
 title_en: "Hash Length Extension Attacks — Deep Technical Manual"
 summary: >
   利用 MD5/SHA1/SHA2 的 Merkle-Damgard 结构缺陷，在不知道密钥的情况下扩展合法签名。
-  覆盖支付回调签名扩展、API 签名扩展、Flask Session 伪造、文件完整性扩展，以及 hashpumpy/hlextend 实战。
+  覆盖支付回调签名扩展、API 签名扩展、Flask Session 伪造、文件完整性扩展、secret length 爆破、canonicalization 分叉，以及 hashpumpy/hlextend 实战。
 summary_en: >
   Exploits the Merkle-Damgard structure flaw in MD5/SHA1/SHA2 to extend valid signatures without knowing
   the secret key. Covers payment callback signature extension, API signature extension, Flask session forgery,
   file integrity extension — with hashpumpy/hlextend practical usage.
 board: "ctf-website"
 category: "13-signature"
-signals: ["length extension", "长度扩展", "Merkle-Damgard", "hashpumpy", "H(secret||message)", "MD5扩展", "SHA256扩展", "HLE"]
+signals: ["length extension", "长度扩展", "Merkle-Damgard", "hashpumpy", "H(secret||message)", "MD5扩展", "SHA256扩展", "HLE", "支付回调", "裸hash签名"]
 mcp_tools: ["http_probe", "kb_router"]
-keywords: ["长度扩展攻击", "hash length extension", "hashpumpy", "MD5扩展", "SHA256扩展", "Merkle-Damgard", "HLE", "Flask签名"]
+keywords: ["长度扩展攻击", "hash length extension", "hashpumpy", "MD5扩展", "SHA256扩展", "Merkle-Damgard", "HLE", "Flask签名", "支付签名扩展"]
 difficulty: "advanced"
 tags: ["signature", "crypto", "hash", "length-extension", "md5", "sha256", "web-security"]
 language: "zh-CN"
-last_updated: "2026-06-25"
-related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signature/02-implementation"]
+last_updated: "2026-07-04"
+related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signature/02-implementation", "ctf-website/12-payment/payment-callback-async"]
 ---
 # Hash Length Extension 攻击 — 深度技术手册
 
 > Hash Length Extension (HLE) 是 MD5/SHA1/SHA2 家族的一个结构缺陷：知道 `H(secret || message)` 后，你可以在**不知道 secret** 的情况下算出 `H(secret || message || padding || append)`。这对所有 `H(secret || message)` 构造的签名都是致命的。
+
+## 0. HLE 路由矩阵
+
+拿到 `sign=32/40/64 hex` 时，不要只看长度就下结论。先还原签名串、参数顺序、secret 位置、服务端取第一个还是最后一个重复参数，再决定是否走 HLE。
+
+| 信号 | 立即动作 | 可打标志 | 分叉 |
+|---|---|---|---|
+| `sign=md5(secret + query)` | 爆 secret 长度，追加 `&status=paid` | forged sign 被接受 | 支付回调链 |
+| `sign=sha256(secret + body)` | 固定 body 原文，append JSON/表单尾部 | 响应从 invalid 变 success | API/GraphQL 链 |
+| `sign=md5(query + secret)` | 测尾拼接、重复参数、截断 | HLE 多数不成立，转实现缺陷 | `02-implementation.md` |
+| HMAC-SHA256 | 转时序/空签/字段覆盖 | HLE 不成立 | `02-implementation.md` |
+| 自定义 session `data|md5(secret+data)` | append role/admin 字段 | cookie/session 权限变化 | auth 链 |
+
+```python
+# hle_route_classifier.py — 从样本判断 HLE 是否值得投入
+import re
+
+HEX_LEN = {32: "md5", 40: "sha1", 64: "sha256", 128: "sha512"}
+
+def classify_hle_sample(sign, signed_message, error_text=""):
+    algo = HEX_LEN.get(len(sign), "unknown")
+    hints = []
+    if re.fullmatch(r"[0-9a-fA-F]+", sign or ""):
+        hints.append(f"hex:{algo}")
+    if any(x in error_text.lower() for x in ["hmac", "mac", "digest"]):
+        hints.append("maybe_hmac")
+    if "&" in signed_message or "=" in signed_message:
+        hints.append("query_or_form")
+    if signed_message.strip().startswith(("{", "[")):
+        hints.append("json_body")
+    if "timestamp" in signed_message or "nonce" in signed_message:
+        hints.append("replay_window")
+    return {"algo": algo, "hints": hints, "try_hle": algo != "unknown" and "maybe_hmac" not in hints}
+
+print(classify_hle_sample("a" * 32, "out_trade_no=1001&amount=0.01"))
+```
 
 ## 1. 理论：为什么能扩展
 
@@ -409,7 +445,7 @@ def check_flask_session_vulnerable(cookie: str):
     """
     检查 Flask session cookie 是否可能被长度扩展攻击
     
-    安全: session=eyJhZG1pbiI6ZmFsc2V9.XYZABC_HMAC
+    HMAC 模式: session=eyJhZG1pbiI6ZmFsc2V9.XYZABC_HMAC
     ── HMAC-SHA1, 免疫
     
     脆弱: session=eyJhZG1pbiI6ZmFsc2V9|MD5HASH
@@ -933,84 +969,53 @@ if __name__ == "__main__":
         print("[*] Try: different param style, longer max_len, different endpoint")
 ```
 
-## 10. 检测与对抗
+## 10. HLE 成败分流与下一跳
 
-### 10.1 服务端对抗方案
+HLE 的关键不是“算法名字”，而是服务端是否真的把 `secret || message` 当作裸 hash 输入。每次尝试都要记录原始签名串、扩展后的原文、secret length、参数顺序和服务端状态变化。
 
-```python
-"""
-对抗 hash length extension 的方法：
-
-1. 使用 HMAC 替代裸 Hash：
-   安全:   HMAC-MD5(secret, message)
-            = MD5((secret ⊕ opad) || MD5((secret ⊕ ipad) || message))
-   不安全: MD5(secret || message)
-   注意：不要自己实现「类 HMAC」，直接用标准 HMAC
-
-2. 使用 SHA-3 / BLAKE2：
-   SHA3-256(secret || message) → 免疫长度扩展
-   BLAKE2(secret, message)     → 免疫长度扩展
-
-3. 使用后拼接（但仍然不安全，见下）：
-   H(message || secret) → 理论上可被扩展（padding 在 message 后）
-   但实际利用更困难，需要控制 message 结尾
-
-4. 双重哈希：
-   MD5(MD5(secret || message)) → 免疫！
-   外层 hash 的输入是固定长度，无法再扩展
-
-5. 固定前缀 + 分隔符：
-   MD5("fixed_prefix" + "|" + message) → 如果"fixed_prefix"是已知的
-   攻击者可以用它作为起点重新计算（但不知道 secret）
-"""
-
-def detect_vulnerable_sign_construction(source_code: str) -> bool:
-    """检测易受 HLE 攻击的签名构造"""
-    patterns = [
-        r'md5\(\s*\$secret\s*\.\s*\$data\s*\)',
-        r'md5\(\s*\$data\s*\.\s*\$secret\s*\)',
-        r"hashlib\.md5\(\s*secret\s*\+\s*message\s*\)",
-        r'MessageDigest\.getInstance\("MD5"\).*update\(secret\).*update\(data\)',
-        r'SHA256\(secret \+ data\)',
-        r'hash\(\s*\'sha256\'\s*,\s*\$secret\s*\.\s*\$data\s*\)',
-    ]
-    for pattern in patterns:
-        if re.search(pattern, source_code):
-            return True
-    return False
-```
-
-### 10.2 攻击检测
+| 结果 | 解释 | 下一步 |
+|---|---|---|
+| forged sign 被接受，订单状态变化 | 裸 hash 前拼接成立 | 转 `payment-callback-async.md` 做回调重放/幂等 |
+| forged sign 被接受但状态不变 | 签名层过了，业务字段未被采用 | 换重复参数顺序、Content-Type、first/last value |
+| 所有长度都 invalid sign | 可能是 HMAC、后拼接、canonicalization 错 | 转 `02-implementation.md` 打空签/类型/异常 |
+| 只在某个 Content-Type 成功 | WAF/框架解析差异 | 转 `hpp-crlf.md` 和支付回调 |
+| append 后出现 500/反序列化报错 | padding 字节进入下游 parser | 转反序列化/文件/日志链 |
 
 ```python
-def detect_length_extension_attack(request_params: dict) -> bool:
-    """
-    检测是否有人在尝试 HLE 攻击
-    
-    特征：
-    1. 参数值中含有不可打印的 padding 字节
-    2. 同一个参数的 sign 构造不同于正常请求
-    3. 参数值中包含 MD padding 的尾端（\x80 + \x00 序列）
-    """
-    suspicious = False
-    
-    for key, value in request_params.items():
-        if isinstance(value, str):
-            # 检查是否有不可打印字符（padding 包含 \x80 和大量 \x00）
-            binary = value.encode('utf-8', errors='replace')
-            non_printable = sum(1 for b in binary if b < 32 and b not in (9, 10, 13))
-            
-            if non_printable > 10:  # padding 通常有很多 \x00
-                print(f"[!] Suspicious non-printable chars in {key}: {non_printable}")
-                suspicious = True
-            
-            # 检查是否包含 \x80（MD padding 的开始标记）
-            if b'\x80' in binary:
-                print(f"[!] Possible MD padding marker in {key}")
-                suspicious = True
-    
-    return suspicious
+# hle_result_router.py — 把 HLE 结果转成下一步
+def route_hle_result(result):
+    status = result.get("status")
+    body = result.get("body", "").lower()
+    before = result.get("before", {})
+    after = result.get("after", {})
+    if status in (200, 204) and before != after:
+        return "payment_callback_async"
+    if status in (200, 204) and before == after:
+        return "signature_passed_business_ignored"
+    if "invalid sign" in body or status in (401, 403):
+        return "try_implementation_bugs_or_canonicalization"
+    if status >= 500:
+        return "parser_error_chain"
+    return "collect_more_oracle"
 ```
+
+### 10.1 Payment Callback HLE Checklist
+
+| 字段 | 记录 |
+|---|---|
+| 原始消息 | `out_trade_no=...&amount=...&status=...` 的精确字节 |
+| 原始签名 | hex 长度、大小写、是否 URL encoded |
+| append | `&status=paid`、`&trade_status=TRADE_SUCCESS`、`&amount=0.01` |
+| secret length | 1-128 爆破结果、成功长度 |
+| 发送形态 | JSON/form/raw query、重复参数 first/last |
+| 服务端 oracle | `invalid sign`、订单状态、权益、余额、flag |
+
+### 10.2 不成立样本
+
+- 签名是 `HMAC-*`，所有 key length 都失败。
+- 服务端把参数重新排序后再验签，append 的原文与服务端 canonicalization 不一致。
+- 验签通过但业务只读取原始字段，append 字段被 parser 丢弃。
+- timestamp/nonce 过期导致签名层之外先被拒绝。
 
 ## 11. 常见 CTF 场景速查
 
@@ -1023,11 +1028,19 @@ def detect_length_extension_attack(request_params: dict) -> bool:
 | URL 签名 | `?token=MD5(secret+path)` | 扩展路径参数 |
 | JWT 类似 | 自实现 signature | 检查算法是否为裸 hash |
 
+## Evidence
+
+- `hle_attempts.jsonl`: 原始消息、原始 sign、算法、secret length、append、forged sign、发送形态、响应摘要。
+- `canonicalization_matrix.csv`: 参数顺序、重复参数策略、Content-Type、URL encoding 层数、服务端 oracle。
+- `payment_state_diff.json`: HLE 前后订单、流水、权益、余额快照。
+- 成功样本: forged sign 被接受且 `paid/delivered/entitlement/flag` 出现。
+- 失败样本: HMAC/后拼接/排序不一致/nonce 过期导致所有 key length 失败。
+
 ## 12. 参考
 
 - [hashpumpy GitHub](https://github.com/bwall/hashpumpy)
 - [hlextend PyPI](https://pypi.org/project/hlextend/)
-- Flask session 安全 (HMAC): HMAC 模式下免疫
+- Flask session HMAC 模式不走 HLE
 - SHA-3 规范: FIPS 202 (海绵结构)
 - BLAKE2 RFC 7693
 

