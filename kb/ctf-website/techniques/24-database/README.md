@@ -11,6 +11,7 @@
 | [04-config-exposure.md](04-config-exposure.md) | 配置泄露：.env/config.php/默认凭证 | 基础 |
 | [05-backup-log-leak.md](05-backup-log-leak.md) | 备份候选生成、日志提取、dump 解析 | 进阶 |
 | [06-card-platform.md](06-card-platform.md) | 发卡平台实战：CDK泄露+IDOR+XSS | 综合 |
+| [07-data-cleaning.md](07-data-cleaning.md) | 泄露 dump 抽取、聚类、锚点映射与结构化输出 | 进阶 |
 
 ## 快速入口
 
@@ -21,3 +22,4 @@
 - 发现了 .env 或 config.php → [04-config-exposure.md](04-config-exposure.md)
 - 想找数据库备份文件 → [05-backup-log-leak.md](05-backup-log-leak.md)
 - 打发卡/电商平台 → [06-card-platform.md](06-card-platform.md)
+- 拿到混合 dump/日志/短码列表 → [07-data-cleaning.md](07-data-cleaning.md)

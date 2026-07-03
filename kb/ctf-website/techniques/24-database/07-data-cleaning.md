@@ -31,7 +31,7 @@ keywords:
   - "data dump cleaning"
   - "data classification"
   - "泄露数据库"
-difficulty: "beginner"
+difficulty: "advanced"
 tags:
   - "database"
   - "data-cleaning"
@@ -39,7 +39,7 @@ tags:
   - "methodology"
   - "data-analysis"
 language: "zh-CN"
-last_updated: "2026-06-25"
+last_updated: "2026-07-04"
 related_articles: []
 ---
 # Database Dump Cleaning — 泄露数据清洗方法论
@@ -49,6 +49,16 @@ related_articles: []
 ## 关键词
 
 `数据清洗` `泄露数据` `格式分类` `特征提取` `锚点映射` `置信度分级` `数据去噪` `前缀聚类` `计数器归一化`
+
+## 输入信号
+
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| HTML/JSON/日志里混入卡密、订单号、账号、下载链接 | 先抽字段路径和原始行号 | 同一字段下值格式稳定，能聚出高频前缀 | 每行都是模板文案、错误页或分页噪声 |
+| dump 中有商品名、SKU、订单 ID、CDK 同时出现 | 建立 `record -> entity -> order` 三表 | 同一 SKU 下 CDK 前缀、长度、字符集一致 | SKU 与 CDK 无稳定关系，只是后台操作日志 |
+| 文件里只有一堆短码/长 token | 做长度、字符集、前缀、校验位聚类 | 聚类结果能反推出库存批次或权益类型 | 分布均匀且没有任何可复查锚点 |
+| 邮件/短信/回调日志泄露 | 用订单号、手机号后四位、邮箱域名做弱锚点 | 订单状态、支付金额、发货字段能连成链 | 只有通知模板，无订单实体字段 |
+| 备份 SQL / CSV / XLSX | 先解析 schema，再抽高价值字段 | 字段名指向 `card/pass/secret/key/url/license` | 只有测试表、空表或迁移结构 |
 
 ## 0. 流程全景
 
@@ -60,6 +70,16 @@ HTML/JSON  定位数据块   去除标记行   长度/字符集  样本→实体
 ```
 
 ## 1. 源数据结构识别
+
+### 1.0 路由矩阵
+
+| 输入形态 | 第一刀 | 第二刀 | 证据字段 |
+|---|---|---|---|
+| HTML 多段 body/table/textarea | `BeautifulSoup.get_text()` 与表格列名双轨 | 保留 DOM 路径、行号和邻近标题 | `source_path`, `dom_hint`, `line_no` |
+| JSON API 响应 | 递归遍历所有标量字段 | 字段路径聚类，优先含 `card/token/order/url` 的路径 | `json_path`, `value`, `siblings` |
+| SQL dump | 解析 `CREATE TABLE` 与 `INSERT` | 字段名评分，按表输出 CSV | `table`, `column`, `row_id` |
+| 混合日志 | 正则提取 key-value、URL query、JSON 片段 | 按 request id/order id/session id 归并 | `ts`, `request_id`, `entity_id` |
+| 无结构短码列表 | 行分类 + 长度/字符集/前缀聚类 | 找计数器、校验位、批次前缀 | `cluster`, `pattern`, `sample` |
 
 ### 1.1 原始格式判定
 
@@ -82,6 +102,75 @@ HTML/JSON  定位数据块   去除标记行   长度/字符集  样本→实体
 
 有效数据常被包裹在噪声中——错误页输出、标签行穿插、重复 header。策略：**状态机扫描**，定义进入/退出条件，仅提取数据块内的行。
 
+```python
+#!/usr/bin/env python3
+import argparse
+import csv
+import json
+import re
+from html.parser import HTMLParser
+from pathlib import Path
+
+TOKEN_RE = re.compile(r"(?i)(https?://\S+|[A-Z0-9][A-Z0-9._-]{5,80}|[\w.+-]+@[\w.-]+\.[a-z]{2,})")
+NOISE_RE = re.compile(r"(?i)^(null|none|undefined|test|demo|asd+|123456|[-_=]{3,})$")
+
+class TextSink(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+    def handle_data(self, data):
+        if data.strip():
+            self.parts.append(data.strip())
+
+def html_text(raw):
+    sink = TextSink()
+    sink.feed(raw)
+    return "\n".join(sink.parts)
+
+def flatten_json(obj, prefix="$"):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from flatten_json(v, f"{prefix}.{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from flatten_json(v, f"{prefix}[{i}]")
+    else:
+        yield prefix, "" if obj is None else str(obj)
+
+def iter_candidates(path):
+    raw = Path(path).read_text(encoding="utf-8", errors="ignore")
+    rows = []
+    try:
+        obj = json.loads(raw)
+        for jp, value in flatten_json(obj):
+            rows.append((jp, value))
+    except json.JSONDecodeError:
+        text = html_text(raw) if "<html" in raw.lower() or "<body" in raw.lower() else raw
+        for idx, line in enumerate(text.splitlines(), 1):
+            rows.append((f"line:{idx}", line.strip()))
+    for source, text in rows:
+        for m in TOKEN_RE.finditer(text):
+            value = m.group(1).strip(" ,;\"'")
+            if not NOISE_RE.match(value):
+                yield {"source": source, "value": value, "length": len(value)}
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dump")
+    ap.add_argument("-o", "--output", default="clean-candidates.csv")
+    args = ap.parse_args()
+    with open(args.output, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["source", "value", "length"])
+        writer.writeheader()
+        writer.writerows(iter_candidates(args.dump))
+    print(args.output)
+
+if __name__ == "__main__":
+    main()
+```
+
+成功样本：输出 CSV 里同一字段路径出现稳定 token/CDK/URL；失败样本：候选集中大多是模板词、CSS 类名、前端 bundle hash，需要回到源格式重新定界。
+
 ## 2. 特征维度
 
 ### 2.1 基础维度
@@ -96,6 +185,56 @@ HTML/JSON  定位数据块   去除标记行   长度/字符集  样本→实体
 ### 2.2 前缀聚类
 
 先取 2 字符分组，高频分组再细化到 3 字符。对计数器变体做归一化合并。
+
+```python
+#!/usr/bin/env python3
+import argparse
+import csv
+import re
+from collections import Counter, defaultdict
+
+HEX_COUNTER = re.compile(r"^([A-Z]{2})[0-9A-F]([A-Z0-9._-]{3,})$", re.I)
+
+def charset_of(v):
+    if re.fullmatch(r"[0-9]+", v):
+        return "digits"
+    if re.fullmatch(r"[a-f0-9]+", v):
+        return "hex-lower"
+    if re.fullmatch(r"[A-F0-9]+", v):
+        return "hex-upper"
+    if re.fullmatch(r"[A-Z0-9]+", v):
+        return "upper-num"
+    if v.startswith("http"):
+        return "url"
+    return "mixed"
+
+def normalize_prefix(v, n=3):
+    up = v.upper()
+    m = HEX_COUNTER.match(up)
+    if m:
+        return f"{m.group(1)}*:{len(v)}:{charset_of(v)}"
+    return f"{up[:n]}:{len(v)}:{charset_of(v)}"
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("csv_file")
+    ap.add_argument("--value-column", default="value")
+    ap.add_argument("--top", type=int, default=30)
+    args = ap.parse_args()
+    buckets = defaultdict(list)
+    with open(args.csv_file, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            v = row[args.value_column].strip()
+            if v:
+                buckets[normalize_prefix(v)].append(v)
+    ranked = sorted(buckets.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:args.top]
+    for key, values in ranked:
+        lens = Counter(map(len, values))
+        print(f"{key}\tcount={len(values)}\tlens={dict(lens)}\tsample={values[:3]}")
+
+if __name__ == "__main__":
+    main()
+```
 
 ### 2.3 计数器归一化
 
@@ -146,6 +285,58 @@ HTML/JSON  定位数据块   去除标记行   长度/字符集  样本→实体
 - 同一商品下不同锚点返回的前缀是否一致
 - 块大小与商品库存量是否在同一数量级
 
+```python
+#!/usr/bin/env python3
+import argparse
+import csv
+from collections import defaultdict
+
+def load_map(path, key, value):
+    out = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            out[row[key].strip().upper()] = row[value].strip()
+    return out
+
+def prefix(v):
+    up = v.strip().upper()
+    return up[:3] if len(up) >= 3 else up
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("candidates")
+    ap.add_argument("anchors", help="CSV: prefix,entity")
+    ap.add_argument("-o", "--output", default="classified.csv")
+    args = ap.parse_args()
+    anchors = load_map(args.anchors, "prefix", "entity")
+    stats = defaultdict(int)
+    with open(args.candidates, newline="", encoding="utf-8") as src, open(args.output, "w", newline="", encoding="utf-8") as dst:
+        reader = csv.DictReader(src)
+        fieldnames = reader.fieldnames + ["prefix", "entity", "confidence"]
+        writer = csv.DictWriter(dst, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in reader:
+            p = prefix(row["value"])
+            entity = anchors.get(p, "")
+            row.update({"prefix": p, "entity": entity, "confidence": "confirmed" if entity else "format-only"})
+            stats[(p, entity or "UNKNOWN")] += 1
+            writer.writerow(row)
+    for (p, entity), count in sorted(stats.items(), key=lambda x: -x[1])[:40]:
+        print(f"{p}\t{entity}\t{count}")
+
+if __name__ == "__main__":
+    main()
+```
+
+锚点 CSV 最小格式：
+
+```csv
+prefix,entity
+VIP,monthly_vip
+CDK,game_card
+TK*,ticket_batch
+```
+
 ## 5. 品牌/名称关联
 
 ### 5.1 直接匹配
@@ -182,6 +373,60 @@ HTML/JSON  定位数据块   去除标记行   长度/字符集  样本→实体
 ## 8. 输出规范
 
 每条记录应包含：原始行号、数据内容、分类标签、关联实体 ID、关联实体名称、置信度。输出格式：CSV（全量）、SQLite（查询）、HTML（浏览）。
+
+```python
+#!/usr/bin/env python3
+import argparse
+import csv
+import sqlite3
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS records(
+  id INTEGER PRIMARY KEY,
+  source TEXT,
+  value TEXT,
+  length INTEGER,
+  prefix TEXT,
+  entity TEXT,
+  confidence TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_records_prefix ON records(prefix);
+CREATE INDEX IF NOT EXISTS idx_records_entity ON records(entity);
+"""
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("classified_csv")
+    ap.add_argument("-o", "--output", default="classified.sqlite")
+    args = ap.parse_args()
+    db = sqlite3.connect(args.output)
+    db.executescript(SCHEMA)
+    with open(args.classified_csv, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    db.executemany(
+        "INSERT INTO records(source,value,length,prefix,entity,confidence) VALUES(:source,:value,:length,:prefix,:entity,:confidence)",
+        rows,
+    )
+    db.commit()
+    for row in db.execute("SELECT prefix, entity, confidence, COUNT(*) FROM records GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 30"):
+        print(row)
+    db.close()
+
+if __name__ == "__main__":
+    main()
+```
+
+## Evidence
+
+| 项 | 记录内容 |
+|---|---|
+| 原始输入 | dump 文件 hash、大小、来源类型、解析脚本版本 |
+| 结构识别 | HTML/JSON/SQL/log/plaintext 判定依据、字段路径或原始行号 |
+| 聚类结果 | top 前缀、长度分布、字符集、计数器归一化规则 |
+| 锚点证据 | 订单/API/商品目录/字段名如何把 prefix 绑定到实体 |
+| 成功样本 | classified CSV/SQLite 中可复查的实体映射、可用 URL/token/CDK/订单字段 |
+| 失败样本 | 噪声规则、无法归类前缀、冲突锚点、格式相似但实体不一致的样本 |
+| 下一跳 | 转 `12-payment`、`23-paywall-bypass`、`04-config-exposure` 或 SQLi 抽取链的文件路径 |
 
 ## MCP 工具映射
 
