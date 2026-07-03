@@ -32,7 +32,7 @@ keywords:
   - "Spring Boot actuator"
   - "连接字符串"
   - "源码泄露"
-difficulty: "intermediate"
+difficulty: "advanced"
 tags:
   - "database"
   - "configuration"
@@ -42,7 +42,7 @@ tags:
   - "default-passwords"
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: []
+related_articles: ["ctf-website/24-database/01-sqli-fundamentals", "ctf-website/24-database/05-backup-log-leak", "ctf-website/12-payment/platform-fingerprints", "ctf-website/13-signature/02-implementation"]
 ---
 # Database Config Exposure — 数据库配置泄露
 
@@ -277,6 +277,62 @@ if __name__ == "__main__":
 | `*.rds.amazonaws.com`, `*.aliyuncs.com` | 云数据库 | 判断公网可达、白名单、账号权限 |
 | `unix_socket` | 本机 socket | LFI/RCE 后直连 socket |
 
+## 9. 支付配置与数据库凭证 Pivot
+
+配置泄露命中后，优先把字段路由到“可产生业务结果”的链路。数据库凭证能抽订单账本，支付密钥能伪造或重放回调，对象存储能拿发货文件，Redis 能拿 session/队列。
+
+| 字段 | 常见值 | 目标 | 下一跳 |
+|---|---|---|---|
+| `DB_*`, `DATABASE_URL` | MySQL/PostgreSQL/MSSQL | 订单、支付流水、卡密表 | SQLi / 直连抽表 |
+| `REDIS_URL`, `CACHE_DRIVER` | Redis/cluster | session、购物车、队列 job | NoSQL / 队列发货 |
+| `QUEUE_CONNECTION` | redis/database/sqs | 异步回调、发货任务 | payment-callback |
+| `PAY_KEY`, `EPAY_KEY` | MD5/HMAC key | Epay/码支付回调 | signature implementation |
+| `STRIPE_SECRET`, `PAYPAL_CLIENT_SECRET` | 第三方 API secret | 账单/订阅/退款状态 | payment-subscription |
+| `OSS_*`, `S3_*` | bucket/key | 下载链接、卡密文件、备份 | backup-log-leak |
+
+### 9.1 配置到攻击链路由器
+
+```python
+# config_pivot_router.py — 泄露配置到下一跳路线
+ROUTES = {
+    "db": ("DB_", "DATABASE_URL", "MYSQL_", "POSTGRES_", "SQLSERVER_"),
+    "redis": ("REDIS_", "CACHE_", "SESSION_DRIVER", "QUEUE_CONNECTION"),
+    "payment": ("PAY_", "EPAY_", "STRIPE_", "PAYPAL_", "ALIPAY_", "WECHATPAY_"),
+    "storage": ("OSS_", "S3_", "COS_", "BUCKET"),
+}
+
+NEXT = {
+    "db": "抽 orders/pay_log/cards/config 表，生成订单状态机",
+    "redis": "枚举 session/cart/order/queue key，接发货与登录态",
+    "payment": "枚举 sign_type/canonical/回调字段，转签名实现缺陷",
+    "storage": "列 bucket/object 前缀，找备份、卡密、下载链接",
+}
+
+def route_config(env):
+    out = []
+    for name, prefixes in ROUTES.items():
+        keys = [k for k in env if any(k.startswith(p) or k == p for p in prefixes)]
+        if keys:
+            out.append({"route": name, "keys": keys, "next": NEXT[name]})
+    return out
+```
+
+### 9.2 连接后最小抽样
+
+直连数据库后先做最小抽样，不要一上来全库导出：
+
+```sql
+SELECT DATABASE(), USER(), VERSION();
+SHOW TABLES LIKE '%order%';
+SHOW TABLES LIKE '%pay%';
+SHOW TABLES LIKE '%card%';
+SHOW TABLES LIKE '%config%';
+SELECT id,out_trade_no,status,amount,paid_at FROM orders ORDER BY id DESC LIMIT 5;
+SELECT order_id,trade_no,money,status,raw FROM pay_log ORDER BY id DESC LIMIT 5;
+```
+
+Evidence 保存 `config_pivot.json`、`db_min_sample.jsonl`、`payment_secret_probe.json`。成功样本是配置字段带来可复查的订单、回调、session、队列或发货差分；失败样本是凭证只在容器内可解析、账号权限不足且无业务表、支付 key 与当前网关不匹配。
+
 ## 攻击链 / 工作流
 
 ```
@@ -286,7 +342,8 @@ if __name__ == "__main__":
 4. 判断凭证作用域：本地数据库、内网数据库、云 RDS、缓存服务、消息队列
 5. 连接后先抓版本、当前库、当前用户、表名前缀和权限位
 6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录、支付回调签名
-7. 记录泄露路径、字段片段、连接结果、下一跳入口和失败分支
+7. 将 DB/Redis/Queue/Payment/Storage 配置路由到订单、队列、卡密、回调和对象存储
+8. 记录泄露路径、字段片段、连接结果、下一跳入口和失败分支
 ```
 
 ## Evidence
@@ -299,6 +356,7 @@ if __name__ == "__main__":
 | 环境信息 | phpinfo/debug 页面中的 DOCUMENT_ROOT、open_basedir、框架版本 |
 | 下一跳 | 可读表、可达内网服务、支付密钥、管理后台或备份路径 |
 | 失败样本 | 403/404、连接超时、账号无权限、host 只在容器内解析 |
+| 业务差分 | 订单、回调、队列、session、卡密或对象存储的可复查变化 |
 
 ## MCP 工具映射
 
@@ -309,7 +367,7 @@ if __name__ == "__main__":
 | 工具执行 | `run_ctf_tool` | 调用目录扫描、git-dumper、curl 等工具 |
 | 证据记录 | `workspace_write_text` | 保存配置字段样例和验证结果 |
 
-## 8. 关联技术
+## 10. 关联技术
 
 - [[01-sqli-fundamentals]] — 获凭证后连接数据库
 - [[03-nosql-injection]] — NoSQL 未授权

