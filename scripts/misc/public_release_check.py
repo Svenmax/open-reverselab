@@ -84,7 +84,7 @@ def main() -> int:
         # token/key patterns enabled everywhere, but apply assignment heuristics
         # only to executable/config content to avoid treating examples as leaks.
         rel_parts = path.relative_to(ROOT).parts
-        if "kb" not in rel_parts and re.search(
+        if "kb" not in rel_parts and "docs" not in rel_parts and re.search(
             r"(?im)^[^#\n]*(?:password|passwd|api[_-]?key|token|secret)[ \t]*=[ \t]*[^\s#]+",
             text,
         ):
