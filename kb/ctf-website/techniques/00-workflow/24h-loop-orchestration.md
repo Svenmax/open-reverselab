@@ -1,3 +1,41 @@
+---
+id: "ctf-website/00-workflow/24h-loop-orchestration"
+title: "24h Loop Orchestration"
+title_en: "24h Loop Orchestration"
+summary: >
+  面向 Claude Code / Codex 的 24 小时 Web CTF 循环编排，使用 manifest checkpoint、kb_router、攻击网和 MCP 工具把每轮路径推进写回可恢复状态。
+summary_en: >
+  24-hour Web CTF loop orchestration for Claude Code and Codex, using manifest checkpoints, kb_router, attack-network routing, and MCP tools to keep every round resumable.
+board: "ctf-website"
+category: "00-workflow"
+signals:
+  - "24h loop"
+  - "ctf_autopilot"
+  - "ai_manifest"
+  - "checkpoint"
+  - "fleet orchestration"
+mcp_tools:
+  - "kb_router"
+  - "kb_read_file"
+  - "ctf_autopilot_round"
+  - "ctf_new_challenge"
+keywords:
+  - "24h CTF"
+  - "loop orchestration"
+  - "checkpoint"
+  - "autopilot"
+  - "manifest"
+difficulty: "intermediate"
+tags:
+  - "workflow"
+  - "ctf"
+  - "automation"
+  - "agent"
+language: "zh-CN"
+last_updated: "2026-07-03"
+related_articles:
+  - "ctf-website/attack-network"
+---
 # 24h Loop Orchestration
 
 面向 Claude Code / Codex 的 24 小时无人值守 Web CTF 工作流编排。目标是让

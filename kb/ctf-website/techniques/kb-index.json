@@ -515,10 +515,16 @@
         "metadata service",
         "169.254.169.254",
         "iam role",
-        "function url"
+        "function url",
+        "sts",
+        "assume role",
+        "passrole",
+        "policy simulation",
+        "irsa"
       ],
       "files": [
-        "10-cloud/serverless-lambda.md"
+        "10-cloud/serverless-lambda.md",
+        "10-cloud/aws-iam-privesc.md"
       ],
       "priority": 7
     },
@@ -535,10 +541,17 @@
         "etcd",
         "runc",
         "rbac",
-        "hostpath"
+        "hostpath",
+        "selfsubjectaccessreview",
+        "pods/exec",
+        "docker.sock",
+        "privileged",
+        "containerd"
       ],
       "files": [
-        "10-cloud/kubernetes-container.md"
+        "10-cloud/kubernetes-container.md",
+        "10-cloud/k8s-rbac-attack-paths.md",
+        "10-cloud/container-runtime-escape.md"
       ],
       "priority": 7
     },
@@ -553,10 +566,18 @@
         "runner",
         "workflow",
         "self-hosted",
-        "groovy"
+        "groovy",
+        "pull_request_target",
+        "github_token",
+        "oidc",
+        "terraform",
+        "tfstate",
+        "iac"
       ],
       "files": [
-        "10-cloud/ci-cd-pipeline.md"
+        "10-cloud/ci-cd-pipeline.md",
+        "10-cloud/github-actions-abuse-paths.md",
+        "10-cloud/terraform-state-secrets.md"
       ],
       "priority": 7
     },

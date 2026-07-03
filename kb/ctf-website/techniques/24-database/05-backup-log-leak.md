@@ -244,9 +244,9 @@ git-dumper target/.git output/
 |----------|----------|
 | 文件命中 | URL、状态码、Content-Length、ETag/Last-Modified |
 | 完整性 | SHA256、文件大小、解压后的文件列表 |
-| 数据内容 | 脱敏表名、字段名、样例行、日志关键片段 |
+| 数据内容 | 表名、字段名、样例行、日志关键片段 |
 | 源码恢复 | `.git/HEAD`、恢复提交、敏感文件路径 |
-| 修复验证 | 备份文件 404/403、目录索引关闭、历史凭证轮换 |
+| 约束效果 | 备份文件 404/403、目录索引关闭、历史凭证轮换 |
 
 ## MCP 工具映射
 
@@ -255,7 +255,7 @@ git-dumper target/.git output/
 | 知识检索 | `kb_router` | 按 backup leak、log leak、git exposure 搜索 |
 | HTTP 探测 | `http_probe` | 批量验证候选备份/日志路径 |
 | 工具执行 | `run_ctf_tool` | 调用 git-dumper、目录枚举、解包/解析脚本 |
-| 证据记录 | `workspace_write_text` | 保存文件哈希、脱敏样例和恢复清单 |
+| 证据记录 | `workspace_write_text` | 保存文件哈希、字段样例和恢复清单 |
 
 ## 7. 关联技术
 

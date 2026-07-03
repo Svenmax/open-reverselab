@@ -67,7 +67,7 @@ related_articles: ["ctf-website/13-signature/00-overview", "ctf-website/13-signa
 │  6. 时间盲注签名恢复                                              │
 │     └─ 完整时序攻击脚本                                           │
 │                                                                 │
-│  7. 完整审计脚本                                                  │
+│  7. 完整攻击路径脚本                                                  │
 │     └─ implementation_audit.py                                   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -1727,10 +1727,10 @@ def verify():
 # 攻击: 针对 localhost:5000/verify 跑 timing_attack_hmac.py
 ```
 
-## 7. 完整审计脚本
+## 7. 完整攻击路径脚本
 
 ```python
-# implementation_audit.py — 签名实现缺陷完整审计
+# implementation_audit.py — 签名实现缺陷完整路径
 import requests, time, hmac, hashlib, json, statistics
 
 TARGET = "https://target"

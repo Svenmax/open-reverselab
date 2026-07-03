@@ -2588,7 +2588,7 @@ if __name__ == "__main__":
 
 ---
 
-## 7. 完整密钥审计脚本
+## 7. 完整密钥攻击路径脚本
 
 ### 7.1 `key_audit.py` — 全自动密钥攻击流水线
 
@@ -2597,7 +2597,7 @@ if __name__ == "__main__":
 """
 key_audit.py — 全自动密钥攻击流水线
 
-整合所有密钥攻击技术，自动执行多阶段审计:
+整合所有密钥攻击技术，自动执行多阶段路径执行:
 
 Phase 1: 密钥发现   — 从目标提取所有可能的密钥
 Phase 2: 弱密钥测试  — Top 100 + 框架默认 + 常见模式
@@ -2945,10 +2945,10 @@ class Phase6_KeyReuse:
         return findings
 
 
-# ========== 主审计器 ==========
+# ========== 主路径执行器 ==========
 
 class KeyAuditor:
-    """全自动密钥审计主控制器"""
+    """全自动密钥路径主控制器"""
 
     def __init__(self, target: str, **kwargs):
         self.target = target
@@ -2971,7 +2971,7 @@ class KeyAuditor:
         return bool(self.target_sig) and len(self.target_sig) >= 32
 
     def run(self):
-        """执行完整密钥审计流水线"""
+        """执行完整密钥攻击路径流水线"""
 
         print(f"""
 ╔══════════════════════════════════════════════════════════╗
@@ -3050,7 +3050,7 @@ class KeyAuditor:
         self._print_summary()
 
     def _print_summary(self):
-        """打印审计摘要"""
+        """打印路径摘要"""
         elapsed = (datetime.utcnow() - datetime.fromisoformat(
             self.results["started_at"])).total_seconds()
 
@@ -3087,10 +3087,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # 基础审计 (仅密钥发现)
+  # 基础发现 (仅密钥发现)
   python key_audit.py https://target.com
 
-  # 带签名验证的完整审计
+  # 带签名验证的完整路径
   python key_audit.py https://target.com \\
       --sig abc123def456... \\
       --data 746573745f64617461
@@ -3099,7 +3099,7 @@ Examples:
   python key_audit.py https://target.com --deep \\
       --company "Acme" --app "SuperPay"
 
-  # 离线审计: 只给签名和数据，不扫 URL
+  # 离线路径: 只给签名和数据，不扫 URL
   python key_audit.py --sig abc123... --data 74657374
 
   # GPU 加速爆破
@@ -3126,7 +3126,7 @@ Examples:
     if args.gpu:
         AUDIT_CONFIG["gpu_crack"] = True
 
-    # 构造审计器
+    # 构造路径执行器
     auditor = KeyAuditor(
         target=args.target or "cli-only",
         company=args.company or "",
@@ -3205,5 +3205,5 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“响应差异”与服务端副作用分开记录；只有权限、状态、数据或 Flag 可重复变化才算确认。
-- 从全新 session/重置状态最小化重放，记录依赖、并发参数、时间窗口及失败样本。
+- 固定 session、输入、并发参数和时间窗口重放，记录成功响应、失败样本和下一跳。
 - 输出统一放入 `exports/ctf-website/<case>/`，凭据只用 `REDACTED` 占位，自动检索 `flag{}`、`CTF{}`、`DASCTF{}`。

@@ -700,7 +700,7 @@ Client_secret 硬编码 (SPA) → 冒充合法客户端 → 任意用户授权
 
 ## 证据
 
-记录: 完整的 OAuth 流程 URI、redirect_uri 白名单、response_type 支持情况、PKCE 验证状态、state 参数、测试的 scope 列表、成功泄露的 token (脱敏)、token 响应内容。
+记录: 完整的 OAuth 流程 URI、redirect_uri 白名单、response_type 支持情况、PKCE 验证状态、state 参数、测试的 scope 列表、成功泄露的 token 字段与响应片段、token 响应内容。
 
 ## MCP 工具映射
 

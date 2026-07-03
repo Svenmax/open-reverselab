@@ -244,7 +244,7 @@ UPDATE users SET password='new' WHERE username='admin' AND SLEEP(3)--
 4. 将 INSERT/UPDATE/ORDER BY/LIMIT 等非 SELECT 场景分别建模，避免套用单一 payload
 5. 对每种绕过只保留最小可验证 payload，并记录触发条件
 6. 如果 payload 需要外带通道，保存 DNS/HTTP listener 原始日志作为证据
-7. 输出 WAF 规则假设、可绕过语法族和修复建议（参数化 + allowlist）
+7. 输出 WAF 规则假设、可绕过语法族和服务端约束建议（参数化 + allowlist）
 ```
 
 ## Evidence
@@ -255,7 +255,7 @@ UPDATE users SET password='new' WHERE username='admin' AND SLEEP(3)--
 | 二阶注入 | 写入点请求、触发点请求、延迟或报错输出 |
 | OOB 注入 | DNS/HTTP/SMB listener 日志、唯一 token |
 | 非 SELECT 注入 | INSERT/UPDATE/ORDER BY/LIMIT 的最小触发语句 |
-| 修复验证 | 参数化后同 payload 不再改变 SQL 语义 |
+| 约束效果 | 参数化后同 payload 不再改变 SQL 语义 |
 
 ## MCP 工具映射
 

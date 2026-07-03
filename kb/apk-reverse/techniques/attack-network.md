@@ -282,3 +282,17 @@ AndroidManifest → exported provider → data leak → CVE
 不要线性思考 "APK→jadx→report"
 而要网状思考 "APK → jadx → crypto → Frida → dump → re-analyze → patch → repack"
 ```
+
+## 节点执行口径
+
+每个节点都按同一格式推进：
+
+```text
+入口信号: Manifest、类名、方法签名、SO 名称、字符串、import 或运行时日志
+打点动作: jadx/apktool/readelf/Ghidra/Frida/adb 中的具体命令或脚本
+成功标志: hook 命中、明文出现、dex/so dump、patch 生效、repack 可安装运行
+下一跳: Java / Native / Crypto / Network / Packer / Patch / Report 中的哪个节点
+Evidence: 包名、组件、偏移、hook 输出、dump 路径、patch diff、运行截图或日志
+```
+
+如果某条路径只拿到类名或字符串，先把它转成可执行打点：Frida hook、Ghidra xref、OkHttp interceptor、`dlopen`/`RegisterNatives` 追踪或 smali patch。每轮输出都要能被下一轮直接消费。

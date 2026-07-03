@@ -4,7 +4,7 @@ title: "Payment Race / Lost Update — 余额扣减丢失更新"
 title_en: "Payment Race / Lost Update — Balance Deduction Loss via Race Conditions"
 summary: >
   聚焦余额、quota 或积分系统中 read-modify-write 非原子操作导致的 lost update 竞态漏洞，
-  提供差分实验方法论、可运行探针脚本和白盒审计要点，不依赖盲目高并发。
+  提供差分实验方法论、可运行攻击路径脚本和白盒定位点，不依赖盲目高并发。
 summary_en: >
   Focuses on lost update race conditions caused by non-atomic read-modify-write in balance/quota/credits
   systems, with differential experiment methodology, runnable probe scripts, and white-box audit guidance.
@@ -95,7 +95,7 @@ Cloudflare、nginx、Caddy、SQLite、MySQL 等只能改变窗口和限流行为
 
 只有在成功计费请求数和 usage 可比，且 `abs(Δrace) < abs(Δcontrol)` 可重复出现时，才有 lost update 证据。`PUT 200` 数量多、响应变慢或出现 429 都不是漏洞证明。
 
-## 4. 可运行差分探针
+## 4. 可运行差分打点
 
 仓库脚本：`scripts/ctf-website/payment_lost_update_probe.py`
 
@@ -128,7 +128,7 @@ python scripts/ctf-website/payment_lost_update_probe.py `
 --update-json '{"sidebar_modules":"chat,console"}'
 ```
 
-先用低并发确认链路，再逐步测试 `2, 4, 8, 12, 16` workers。每次只改变一个变量，并保留完整 evidence JSON。
+先用窄窗口确认链路，再逐步测试 `2, 4, 8, 12, 16` workers。每次只改变一个变量，并保留完整 evidence JSON。
 
 ## 5. 同步窗口与调优
 
@@ -202,7 +202,7 @@ POST      /api/coupon/redeem
 | PUT 200 很多 | handler 返回成功但无状态变化 | GET 回读更新字段和 `updated_at` |
 | XFF 后 429 减少 | 代理错误信任客户端头 | 单独记录为 rate-limit trust flaw，不等于 lost update |
 
-## 8. 白盒审计点
+## 8. 白盒定位点
 
 搜索：
 
@@ -225,7 +225,7 @@ tx := db.Model(&User{}).
 return nil // 未检查 tx.Error / tx.RowsAffected
 ```
 
-安全实现应只更新允许字段，并让扣减成为数据库原子操作：
+稳定实现应只更新允许字段，并让扣减成为数据库原子操作：
 
 ```sql
 UPDATE users

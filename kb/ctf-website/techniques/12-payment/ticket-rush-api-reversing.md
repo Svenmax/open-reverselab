@@ -4,7 +4,7 @@ title: "Ticket Rush API Reversing — 票务抢购状态机、Token 与风控参
 title_en: "Ticket Rush API Reversing — State Machine, Token & Risk Control Parameters"
 summary: >
   以 bilibili 票务系统为案例，逆向分析 detail → prepare → create → pay 的完整状态机，
-  解析 order token 的二进制编码结构和 ctoken 风控字段，提供 JSHook 定位和只读枚举方法。
+  解析 order token 的二进制编码结构和 ctoken 风控字段，提供 JSHook 定位和枚举方法。
 summary_en: >
   Using bilibili's ticketing system as a case study, reverse-engineers the complete detail → prepare →
   create → pay state machine, decodes the order token binary structure and ctoken risk control fields,
@@ -39,7 +39,7 @@ related_articles: ["ctf-website/12-payment/payment-logic"]
 2. prepare/create 两阶段请求与响应依赖。
 3. token 的结构、时效和服务端校验边界。
 4. ctoken 等风控字段的采集时刻与阶段差异。
-5. 可重放的只读探针；确认漏洞后再构造最小利用。
+5. 可重放的攻击路径脚本；确认漏洞后再构造最小利用。
 
 ## 1. 开发者视角：真正的信任边界
 
@@ -221,7 +221,7 @@ xhr_breakpoint_set("*order/createV2*")
 
 暂停后记录 request body、调用栈、token 生成前输入与响应，不要把第三方 vendor bundle 当业务逻辑。
 
-## 8. 只读枚举脚本
+## 8. 枚举脚本
 
 ```python
 #!/usr/bin/env python3

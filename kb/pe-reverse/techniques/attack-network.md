@@ -304,3 +304,17 @@ AV Evasion → self-test triage_pe → self-test YARA → 闭环
                                       └→Patch→免杀       └→Sigma
 选最短分析路径，同时保留备选。
 ```
+
+## 节点执行口径
+
+每个节点都按同一格式推进：
+
+```text
+入口信号: hash、节区、import、字符串、函数、xref、断点或行为日志
+打点动作: DiE/Ghidra/x64dbg/Frida/Procmon/脚本中的具体命令
+成功标志: 断点命中、参数还原、OEP/dump、key/config/C2 出现、patch 后行为变化
+下一跳: Static / Dynamic / Crypto / Unpack / IOC / Patch / YARA / Report 中的哪个节点
+Evidence: MD5/SHA256、VA/RVA/offset、原始字节、新字节、寄存器/栈、dump 路径、日志片段
+```
+
+如果某个函数暂时看不懂，先把它变成可执行问题：命名候选、入参来源、返回值用途、调用者/被调用者、断点位置和预期观察值。每轮输出都要落到下一个工具动作。

@@ -466,7 +466,7 @@ ext_api.webRequest.onBeforeRequest.addListener(
 
 - 保存 baseline 与单变量 probe 的完整请求、响应状态、关键响应头和正文摘要。
 - 将“页面可见变化”与服务端内容授权分开记录；只有正文差分、状态变化或 Flag 可重复出现才算确认。
-- 从全新浏览器 profile/session 最小化重放，记录 UA、Cookie、Storage、脚本拦截规则和执行时序。
+- 固定浏览器 profile、UA、Cookie、Storage、脚本拦截规则和执行时序重放，记录成功响应、失败样本和下一跳。
 - 输出统一放入 `exports/ctf-website/<case>/`，凭据使用 `REDACTED` 占位并自动检索常见 Flag 格式。
 
 ## MCP 工具映射

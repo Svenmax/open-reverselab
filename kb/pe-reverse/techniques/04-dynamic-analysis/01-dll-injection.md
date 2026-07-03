@@ -222,5 +222,5 @@ AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击链步骤：
 
 - 记录样本 SHA256、架构、映像基址、RVA/VA/文件偏移换算及工具版本。
 - 静态结论绑定函数、Xref、导入、字符串和反编译片段；动态结论绑定断点、寄存器、栈、内存与调用时序。
-- 原始样本只读保留，dump/patch 使用副本并记录前后哈希、原始字节、新字节和行为差异。
-- 将 x64dbg/Frida/Procmon/Ghidra 输出保存到 `exports/windows/`，从干净基线最小化复现后再下结论。
+- 记录样本哈希、dump/patch 路径、原始字节、新字节和行为差异。
+- 将 x64dbg/Frida/Procmon/Ghidra 输出保存到 `exports/windows/`，按同一输入重跑，确认断点命中、内存变化和输出差异。

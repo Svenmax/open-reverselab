@@ -159,7 +159,7 @@ PostMessage → XSS via data render → DOM injection → cookie steal
 
 ## Evidence
 
-记录: postMessage 发送的 origin/data、接收端 handler 代码、成功绕过的证明、OAuth token (脱敏)
+记录: postMessage 发送的 origin/data、接收端 handler 代码、成功绕过的证明、OAuth token 字段与响应片段
 
 ## MCP 工具映射
 

@@ -23,8 +23,12 @@ graph TD
     CRLF["CRLF/HPP<br/>03-injection"]
     DEPCONF["Dep Confusion<br/>11-supply"]
     GHA["GitHub Actions<br/>10-cloud"]
+    GHA_ABUSE["GHA Abuse<br/>10-cloud"]
     LAMBDA["Lambda<br/>10-cloud"]
     POD["K8s Pod<br/>10-cloud"]
+    K8SRBAC["K8s RBAC<br/>10-cloud"]
+    CONTAINER["Container Runtime<br/>10-cloud"]
+    TFSTATE["Terraform State<br/>10-cloud"]
     SAML["SAML<br/>02-auth"]
     JWT["JWT<br/>02-auth/jwt"]
     IDOR["IDOR/BAC<br/>14-idor"]
@@ -84,10 +88,19 @@ graph TD
     DEPCONF -->|~/.aws/creds| IAM
     GHA -->|workflow injection| CRED
     GHA -->|GITHUB_TOKEN| SRC
+    GHA_ABUSE -->|OIDC trust| IAM
+    GHA_ABUSE -->|artifact/cache leak| SRC
     LAMBDA -->|env vars| IAM
     POD -->|SA token mount| SATOKEN
     POD -->|kubelet| SATOKEN
     POD -->|etcd| SRC
+    K8SRBAC -->|can-i secrets/get| CRED
+    K8SRBAC -->|pods/exec| ADMIN
+    K8SRBAC -->|serviceaccounts/token| SATOKEN
+    CONTAINER -->|docker.sock| BE
+    CONTAINER -->|hostPath/privileged| BE
+    TFSTATE -->|outputs/secrets| CRED
+    TFSTATE -->|resource topology| SRC
     SAML -->|NameID forge| CRED
     SAML -->|attribute inject| ADMIN
     JWT -->|alg none/confusion| CRED
@@ -141,6 +154,7 @@ graph TD
     SRC -->|encryption key| CRED
     IAM -->|AWS CLI| ADMIN
     IAM -->|sts:AssumeRole| ADMIN
+    IAM -->|PassRole/Lambda| ADMIN
     SATOKEN -->|kubectl| ADMIN
     DB -->|admin hash crack| ADMIN
 
@@ -161,6 +175,8 @@ graph TD
     LAMBDA -->|Runtime API| BE
     POD -->|runc escape| BE
     POD -->|privileged pod| BE
+    K8SRBAC -->|create pod| POD
+    CONTAINER -->|runtime escape| BE
 
     %% --- Edges: RCE → Flag ---
     BE -->|cat /flag| FLAG
@@ -312,3 +328,17 @@ Paywall → JSON-LD → info leak → API key → Admin
 而要网状思考 "从 A 可以到 B C D，B 可以到 E F，C 可以到 G H..."
 选最短路径，同时备份备选路径。
 ```
+
+## 节点执行口径
+
+每个节点都按同一格式推进：
+
+```text
+入口信号: 从响应、源码、配置、日志或工具输出里看到什么
+打点动作: 运行哪段脚本、哪条命令、哪个 MCP 工具
+成功标志: 响应差异、凭证可用、权限变化、文件可读、Flag 出现
+下一跳: Credential / Source / Admin / RCE / DB / Cloud / Flag 中的哪个节点
+Evidence: 请求、响应、payload 变量、listener 日志、工具输出和落盘路径
+```
+
+如果一个入口没有产生下一跳，把失败样本也写入 Tried / Ruled-out，说明卡在解析、权限、过滤、异步窗口还是业务状态机。这样攻击网可以继续从旁路分叉，而不是在单一路径上空转。

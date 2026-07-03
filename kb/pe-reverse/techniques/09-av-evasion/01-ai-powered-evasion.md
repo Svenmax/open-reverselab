@@ -772,4 +772,4 @@ int main(void) {
 - **状态**: draft
 - **复审轮次**: 1
 - **覆盖**: shellcode 全生命周期 (生成→处理→加载→执行)
-- **武器化**: 是 (仅限授权测试)
+- **落地形态**: loader / shellcode / patch / 脚本化执行链

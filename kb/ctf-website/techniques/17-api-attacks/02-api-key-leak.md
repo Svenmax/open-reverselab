@@ -615,7 +615,7 @@ Phase 1 — 发现
 Phase 2 — 分类与验证
   ├── 区分 public key vs secret key
   ├── p3 调用各平台验证 API
-  ├── 确认密钥 scope (只读/读写/管理员)
+  ├── 确认密钥 scope (读写/管理员/发布)
   └── 确认密钥属于生产环境 (live vs test)
 
 Phase 3 — 利用 (依类型)

@@ -1,6 +1,6 @@
 # ReverseLab — Open-Source Reverse Engineering Lab & MCP Tool Ecosystem
 
-> 167-article knowledge base, 100+ MCP automation tools for reverse engineering.
+> 172-article knowledge base, 100+ MCP automation tools for reverse engineering.
 > Agent-native architecture. Covers CTF, APK, PE, cryptography, game cheating, and more.
 
 ## Quick Links
@@ -11,9 +11,10 @@
 - GitHub: https://github.com/LING71671/open-reverselab
 - Full LLM dump: https://ling71671.github.io/open-reverselab/llms-full.txt
 
-## CTF Website — Web 攻击全表面 (113 articles)
+## CTF Website — Web 攻击全表面 (118 articles)
 
 - [24h Loop Orchestration](https://ling71671.github.io/open-reverselab/kb/ctf-website/00-workflow/24h-loop-orchestration/)
+  >
 - [CAPTCHA Bypass Techniques and Automation](https://ling71671.github.io/open-reverselab/kb/ctf-website/01-recon/captcha-bypass/)
   >
 - [Cloudflare Bypass: Finding the Real Origin Server IP](https://ling71671.github.io/open-reverselab/kb/ctf-website/01-recon/cloudflare-bypass/)
@@ -110,11 +111,21 @@
   >
 - [Multi-CVE Chain Playbook](https://ling71671.github.io/open-reverselab/kb/ctf-website/09-cve/multi-cve-chain-playbook/)
   >
+- [AWS IAM Enumeration and Privilege Escalation Paths](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/aws-iam-privesc/)
+  >
 - [CI/CD Pipeline Attacks](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/ci-cd-pipeline/)
+  >
+- [Container Runtime Escape Field Checks](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/container-runtime-escape/)
+  >
+- [GitHub Actions Abuse Paths](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/github-actions-abuse-paths/)
+  >
+- [Kubernetes RBAC Attack Paths](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/k8s-rbac-attack-paths/)
   >
 - [Kubernetes & Container Escape](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/kubernetes-container/)
   >
 - [Serverless / Lambda Attacks](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/serverless-lambda/)
+  >
+- [Terraform State and IaC Secret Exposure](https://ling71671.github.io/open-reverselab/kb/ctf-website/10-cloud/terraform-state-secrets/)
   >
 - [Valkey RESP Protocol Pre-Auth Assertion Failure DoS (CVE-2026-27623)](https://ling71671.github.io/open-reverselab/kb/ctf-website/11-dos/01-valkey-resp-dos/)
   >
@@ -361,4 +372,4 @@
 
 ---
 Generated: 2026-07-03
-Total articles: 167
+Total articles: 172

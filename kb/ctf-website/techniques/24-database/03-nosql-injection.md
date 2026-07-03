@@ -243,9 +243,9 @@ echo "get keyname" | nc target 11211
 
 ```
 1. 识别技术栈信号：MongoDB 操作符、Redis 端口、Elasticsearch API、CouchDB/Memcached Banner
-2. 低风险探测：未授权访问、认证绕过、错误信息、状态接口
+2. 入口打点：未授权访问、认证绕过、错误信息、状态接口
 3. MongoDB：测试 $ne/$regex/$where 等操作符注入，确认 JSON/参数解析方式
-4. Redis/Memcached：先只读 INFO/STATS/GET，确认权限与数据敏感度
+4. Redis/Memcached：INFO/STATS/GET 打点，确认 key 空间、权限边和下一跳
 5. Elasticsearch/CouchDB：枚举索引/数据库/用户，不直接执行破坏性脚本
 6. 需要 RCE 链时记录版本、插件/脚本引擎状态和写入路径，隔离环境复现
 7. 收敛证据：服务类型、版本、认证状态、可读键/集合/索引样例
@@ -256,10 +256,10 @@ echo "get keyname" | nc target 11211
 | 服务 | 证据 |
 |------|------|
 | MongoDB | 注入前后查询差异、认证绕过请求、操作符 payload |
-| Redis | `INFO` 输出、`CONFIG GET dir`、可读 key 名称（脱敏） |
+| Redis | `INFO` 输出、`CONFIG GET dir`、可读 key 名称 |
 | Elasticsearch | `_cluster/health`、索引列表、查询注入响应 |
 | CouchDB | `/_all_dbs`、`/_users`、未授权状态码 |
-| Memcached | `stats`、`stats items`、脱敏 key/value 样例 |
+| Memcached | `stats`、`stats items`、key/value 样例 |
 
 ## MCP 工具映射
 
@@ -268,7 +268,7 @@ echo "get keyname" | nc target 11211
 | 知识检索 | `kb_router` | 按 MongoDB、Redis、Elasticsearch、NoSQL injection 搜索 |
 | 端点探测 | `http_probe` | 探测 HTTP API 型 NoSQL 服务 |
 | 工具执行 | `run_ctf_tool` | 调用 nc/redis-cli/curl/自定义探测脚本 |
-| 证据记录 | `workspace_write_text` | 保存服务指纹、未授权证据和脱敏样例 |
+| 证据记录 | `workspace_write_text` | 保存服务指纹、未授权证据和字段样例 |
 
 ## 6. 关联技术
 

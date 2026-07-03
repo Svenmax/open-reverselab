@@ -4,7 +4,7 @@ title: "Payment Callback & Async Attack — 支付回调与异步攻击深度手
 title_en: "Payment Callback & Async Attack — Deep Dive into Payment Callback and Async Attacks"
 summary: >
   系统覆盖支付回调签名绕过、回调伪造、幂等性绕过、时序竞态（TOCTOU）、消息队列攻击、Webhook SSRF、DNS Rebinding
-  等异步支付场景的全攻击面，每条技术链路均配有自动化审计脚本。
+  等异步支付场景的全攻击面，每条技术链路均配有自动化攻击路径脚本。
 summary_en: >
   Systematic coverage of payment callback signature bypass, callback forgery, idempotency bypass, TOCTOU races,
   message queue attacks, webhook SSRF, and DNS rebinding — each attack vector with automated audit scripts.
@@ -980,7 +980,7 @@ graph TD
 ## 12. 完整自动化探测脚本
 
 ```python
-# payment_callback_audit.py — 支付回调全自动化审计
+# payment_callback_audit.py — 支付回调全自动化路径执行
 # 用法: python payment_callback_audit.py --order-id ORDER_ID --notify-url /notify
 
 import argparse, hashlib, hmac, json, random, time, threading
@@ -1637,10 +1637,10 @@ def distributed_lock_bypass():
 # → 竞态窗口在 check 和 insert 之间
 ```
 
-## 22. 增强型自动化审计
+## 22. 增强型自动化路径执行
 
 ```python
-# 完整审计清单
+# 完整路径清单
 FULL_AUDIT_CHECKLIST = {
     "signature": [
         "empty_sign", "wrong_sign", "missing_sign", "null_sign",

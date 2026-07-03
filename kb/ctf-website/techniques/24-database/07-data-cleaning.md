@@ -191,7 +191,7 @@ HTML/JSON  定位数据块   去除标记行   长度/字符集  样本→实体
 | 文件哈希 | `hash_file` | 记录原始 dump、清洗后 CSV/SQLite 的完整性 |
 | 模式搜索 | `search_pattern` | 扫描邮箱、手机号、卡密、token、订单号等模式 |
 | 脚本执行 | `run_ctf_tool` | 调用清洗、去重、聚类、格式转换脚本 |
-| 证据记录 | `workspace_write_text` | 保存字段字典、脱敏样例、置信度规则和输出索引 |
+| 证据记录 | `workspace_write_text` | 保存字段字典、字段样例、置信度规则和输出索引 |
 
 ## 9. 关联技术
 

@@ -153,7 +153,7 @@ Lambda → sts:AssumeRole → 跨账户提权 → 组织级访问
 
 ## Evidence
 
-记录: 提取的 IAM credential (脱敏)、env 变量列表、Runtime API 响应、IAM permission 枚举结果
+记录: 提取的 IAM credential 字段、env 变量列表、Runtime API 响应、IAM permission 枚举结果
 
 ## MCP 工具映射
 

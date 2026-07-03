@@ -172,7 +172,7 @@ type=qq&qq=1&page=1
 
 - `act=query` 强制校验登录态
 - 只返回当前用户自己的订单
-- `result` 字段仅返回脱敏后的 CDK
+- `result` 字段返回 CDK 字段样例
 
 ## 3. P0: IDOR 订单详情读取
 
@@ -323,12 +323,12 @@ XSS 链路:
 
 | 风险点 | 证据 |
 |--------|------|
-| 全量库存泄露 | `?mod=faka&action=show` 请求/响应、CDK 字段脱敏样例、响应条数 |
+| 全量库存泄露 | `?mod=faka&action=show` 请求/响应、CDK 字段字段样例、响应条数 |
 | IDOR 订单枚举 | `act=query` 页码、匿名 Session、`isnext` 翻页证据、订单 ID 范围 |
 | 订单详情读取 | `act=order` 的 `id+skey` 请求、kminfo/money/inputs 字段 |
 | DOM-XSS | kminfo/desc 注入 payload、DOM sink、浏览器执行截图或控制台证据 |
 | 支付回调 | 未签名/错误签名回调请求、订单状态变化或明确错误差异 |
-| 修复验证 | 加认证/归属校验/输出编码后，同 payload 不再泄露或执行 |
+| 约束效果 | 加认证/归属校验/输出编码后，同 payload 不再泄露或执行 |
 
 ## MCP 工具映射
 
@@ -337,7 +337,7 @@ XSS 链路:
 | 知识检索 | `kb_router` | 按 card platform、IDOR、payment callback、DOM-XSS 搜索 |
 | HTTP 探测 | `http_probe` | 验证 show/query/order/getcount/pay notify 接口差异 |
 | 工具执行 | `run_ctf_tool` | 调用枚举脚本、Playwright/XSS 验证或 Burp 导出复放 |
-| 证据记录 | `workspace_write_text` | 保存脱敏订单、CDK、请求响应与修复对比 |
+| 证据记录 | `workspace_write_text` | 保存订单、CDK 字段、请求响应与约束对比 |
 
 ## 9. 关联技术
 

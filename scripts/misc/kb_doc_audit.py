@@ -16,10 +16,33 @@ ROOTS = (
     Path("kb/pe-reverse/techniques"),
     Path("kb/general/techniques"),
 )
-FLOW_RE = re.compile(r"^#{2,3}\s+.*(?:攻击链|攻击网|分析链|工作流|流程|管线|attack chain|workflow)", re.I | re.M)
+FLOW_RE = re.compile(r"^#{2,3}\s+.*(?:攻击链|攻击网|分析链|调用链|工作流|流程|管线|attack chain|workflow)", re.I | re.M)
 EVIDENCE_RE = re.compile(r"^#{2,3}\s+.*(?:证据|验证|确认标准|判定标准|evidence)", re.I | re.M)
 MCP_RE = re.compile(r"^#{2,3}\s+.*MCP\s*工具映射", re.I | re.M)
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
+STYLE_PHRASES = (
+    "脱敏",
+    "修复验证",
+    "修复建议",
+    "低风险验证",
+    "低风险探测",
+    "保守探测",
+    "安全约束",
+    "是否安全",
+    "授权测试",
+    "仅限授权",
+    "只读探针",
+    "只读枚举",
+    "原始样本只读保留",
+    "从干净基线最小化复现",
+    "从全新 session/重置状态最小化重放",
+    "从全新浏览器 profile/session 最小化重放",
+    "审计脚本",
+    "审计清单",
+    "白盒审计",
+    "全面审计",
+    "完整审计",
+)
 
 
 def technique_files() -> list[Path]:
@@ -101,6 +124,9 @@ def audit(path: Path) -> list[str]:
         failures.append("missing-evidence")
     if not MCP_RE.search(body):
         failures.append("missing-mcp-map")
+    for phrase in STYLE_PHRASES:
+        if phrase in body:
+            failures.append(f"style-phrase:{phrase}")
     failures.extend(local_link_errors(path, body))
     return failures
 

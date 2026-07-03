@@ -163,7 +163,7 @@ POISON_PROBES = {
 ### CL.TE vs TE.CL 探测
 
 ```python
-# 仅在授权环境测试！
+# 路径打通后记录缓存 key、命中 header 和响应差异
 def probe_smuggling(target: str):
     """CL.TE / TE.CL 差异探测"""
     import socket, ssl

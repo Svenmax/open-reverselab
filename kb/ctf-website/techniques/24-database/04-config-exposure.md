@@ -219,7 +219,7 @@ Flask debug mode → 代码执行
 4. 判断凭证作用域：本地数据库、内网数据库、云 RDS、缓存服务、消息队列
 5. 只做最小登录/版本/权限验证，避免写入或修改业务数据
 6. 关联后续链路：SQLi 文件读写、NoSQL 未授权、备份下载、管理后台登录
-7. 记录泄露路径和脱敏凭证片段，输出清理与轮换建议
+7. 记录泄露路径和凭证字段片段，输出清理与轮换建议
 ```
 
 ## Evidence
@@ -227,10 +227,10 @@ Flask debug mode → 代码执行
 | 证据类型 | 记录内容 |
 |----------|----------|
 | 泄露入口 | URL、参数、文件路径、状态码、响应长度 |
-| 配置字段 | 脱敏后的 host/user/database/driver/port |
-| 访问验证 | 只读登录成功、版本查询、权限边界 |
+| 配置字段 | host/user/database/driver/port 字段样例 |
+| 访问验证 | 登录成功、版本查询、权限边界 |
 | 环境信息 | phpinfo/debug 页面中的 DOCUMENT_ROOT、open_basedir、框架版本 |
-| 修复验证 | 文件不可读、debug 关闭、凭证轮换后旧凭证失效 |
+| 约束效果 | 文件不可读、debug 关闭、凭证轮换后旧凭证失效 |
 
 ## MCP 工具映射
 
@@ -239,7 +239,7 @@ Flask debug mode → 代码执行
 | 知识检索 | `kb_router` | 按 .env、config leak、phpinfo、connection string 搜索 |
 | HTTP 探测 | `http_probe` | 验证配置文件、debug 页面和状态码 |
 | 工具执行 | `run_ctf_tool` | 调用目录扫描、git-dumper、curl 等工具 |
-| 证据记录 | `workspace_write_text` | 保存脱敏配置和验证结果 |
+| 证据记录 | `workspace_write_text` | 保存配置字段样例和验证结果 |
 
 ## 8. 关联技术
 

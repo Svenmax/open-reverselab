@@ -49,6 +49,12 @@ APK/DEX/SO 逆向技术库。覆盖静态分析、Frida 动态验证、脱壳、
 
 每篇正文必须包含：H1 标题、可运行示例、工作流/攻击链、证据与验证闭环、MCP 工具映射，并且本地 Markdown 链接必须可解析。
 
+## 实战写法
+
+每篇文章按“入口信号 → 静态定位 → 动态 Hook/打点 → dump/patch/repack → 复验 → Evidence → MCP 工具映射”组织。正文优先给出 jadx/apktool/readelf/Ghidra/Frida 的落点，而不是只解释概念。
+
+记录证据时写包名、组件名、类/方法签名、SO 名称、偏移、hook 输出、dump 文件路径、patch 字节或 smali diff、安装/运行结果。每一节都要能把读者带到下一跳：Java 层、Native 层、网络协议、壳、加密或重打包。
+
 ```powershell
 python scripts/misc/kb_doc_audit.py
 ```
