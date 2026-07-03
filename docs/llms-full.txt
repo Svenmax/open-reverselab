@@ -14727,6 +14727,79 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 | 订单查询 GraphQL | 替换 `id/orderNo/email` 参数 | 非所有者读到订单节点 | resolver 过滤当前用户 |
 | 下单即预生成卡密 | 未支付订单触发通知/退信 | 未支付也能看到卡密字段 | 发货时才生成卡密 |
 
+### 邮件/订单/卡密三元组
+
+退信链的核心不是“邮箱不存在”，而是邮件、订单和发货账本的绑定关系被拆开了。先把三元组建出来，再决定走退信、订单 IDOR、回调或数据库路线。
+
+| 维度 | 证据字段 | 操作 | 命中后下一跳 |
+|---|---|---|---|
+| 邮件 | `Message-ID`, `Return-Path`, `X-Original-To`, 收件人 | 解析 NDR multipart 与原始正文 | 邮件模板、重发接口 |
+| 订单 | `order_id`, `order_sn`, `out_trade_no`, `trade_no` | 匿名/跨账号/退信 token 对比 | IDOR、回调重放 |
+| 卡密/权益 | `card_key`, `coupon`, `download_url`, `license` | 未支付/已支付/退款后三态回读 | 数字商品、发货状态机 |
+| 数据库 | 表前缀、字段名、报错、日志片段 | 反推订单表和卡密表 | 备份/日志、发卡平台 |
+| 支付 | `status`, `paid_at`, `amount`, `refund_id` | 观察退信是否触发重发/补发 | 支付状态机、异步队列 |
+
+三元组解析器：
+
+```python
+# bounce_order_tuple_extractor.py
+import csv
+import email
+import email.policy
+import json
+import re
+from pathlib import Path
+
+PATTERNS = {
+    "order_id": re.compile(r"(?:order[_ -]?(?:id|sn|no)|out_trade_no|trade_no)[\"'=:\s]+([A-Za-z0-9_-]{4,64})", re.I),
+    "card_key": re.compile(r"(?:card[_ -]?key|卡密|兑换码|license|secret)[\"'=:\s：]+([A-Za-z0-9_-]{6,128})", re.I),
+    "payment": re.compile(r"(?:amount|money|paid_at|payment_status|refund_id)[\"'=:\s]+([^<>\s,]{1,80})", re.I),
+    "download": re.compile(r"https?://[^\s\"'<>]+(?:download|card|order|license)[^\s\"'<>]*", re.I),
+}
+
+def parts(msg):
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_maintype() == "text":
+                yield part.get_content()
+    else:
+        yield msg.get_content()
+
+def extract_one(path):
+    msg = email.message_from_string(Path(path).read_text(encoding="utf-8", errors="ignore"), policy=email.policy.default)
+    text = "\n".join(parts(msg))
+    row = {
+        "file": Path(path).name,
+        "message_id": msg.get("Message-ID", ""),
+        "return_path": msg.get("Return-Path", ""),
+        "original_to": msg.get("X-Original-To", ""),
+    }
+    for key, rx in PATTERNS.items():
+        row[key] = "|".join(sorted(set(rx.findall(text))))[:500]
+    return row
+
+def extract_dir(mail_dir, out_csv="exports/bounce_order_tuple.csv"):
+    rows = [extract_one(p) for p in Path(mail_dir).glob("*.eml")]
+    Path("exports").mkdir(exist_ok=True)
+    if not rows:
+        Path(out_csv).write_text("file,message_id,return_path,original_to,order_id,card_key,payment,download\n", encoding="utf-8")
+        return []
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    Path("exports/bounce_order_tuple.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    return rows
+```
+
+判定节奏：
+
+1. 用平台指纹确定订单查询和支付插件路径。
+2. 生成一组可控订单：正常邮箱、不可达邮箱、同域别名、大小写邮箱。
+3. 把 NDR 原文、订单详情、支付状态回读对齐成 `bounce_order_tuple.csv`。
+4. 如果退信里有 `order_id` 但无卡密，继续打订单详情/重发接口。
+5. 如果退信里出现字段名或 SQL 报错，转数据库备份/日志链补表结构。
+
 ## 攻击链
 
 ```
@@ -16379,6 +16452,93 @@ def fp(base):
     print(json.dumps(hits, ensure_ascii=False, indent=2))
 ```
 
+### 0.2 指纹置信度与链路路由
+
+平台识别要落到可执行链路：订单查询、估价接口、支付插件、卡密发货、安装残留、数据库备份。只命中首页 banner 没价值，至少要拿到两个独立指纹和一个业务接口响应。
+
+| 命中组合 | 平台置信度 | 立即打点 | 账本/SQL 下一跳 |
+|---|---:|---|---|
+| 静态资源 + API 前缀 | 中 | 抽商品、估价、下单参数 | `goods/orders/cards` 表名猜测 |
+| API 前缀 + 订单查询 | 高 | 匿名/跨账号查订单 | IDOR、退信、卡密 |
+| 支付插件路径 + 回调参数 | 高 | `out_trade_no/money/sign` 差分 | 回调重放、签名算法 |
+| `/install/` + `.env`/配置响应 | 高 | 连接串、表前缀、队列驱动 | 配置泄露、备份解析 |
+| JS 版本号 + 默认后台 | 中 | 对照版本脚本 | 后台路由、历史漏洞 |
+
+路由器：
+
+```python
+# payment_platform_route_matrix.py
+import csv
+import hashlib
+import re
+from urllib.parse import urljoin
+
+import requests
+
+ROUTES = {
+    "order_query": [
+        "/user/api/index/query",
+        "/ajax.php?act=query",
+        "/api/order/detail",
+        "/api/orders/{order_id}",
+    ],
+    "valuation": [
+        "/user/api/index/valuation",
+        "/ajax.php?act=gettool",
+        "/api/products",
+        "/api/checkout/preview",
+    ],
+    "payment_plugin": [
+        "/plugin/epay/",
+        "/epay/notify_url.php",
+        "/pay/notify",
+        "/api/payment/callback",
+    ],
+    "install_config": [
+        "/install/",
+        "/.env",
+        "/config/database.php",
+        "/runtime.log",
+    ],
+}
+
+FIELD_RX = re.compile(r"(order|trade|pay|money|amount|card|coupon|secret|database|mysql|redis|queue)", re.I)
+
+def probe_routes(base_url, order_id="1001"):
+    rows = []
+    s = requests.Session()
+    for group, paths in ROUTES.items():
+        for raw_path in paths:
+            path = raw_path.format(order_id=order_id)
+            url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+            try:
+                r = s.get(url, timeout=8, allow_redirects=False)
+                marker = sorted(set(FIELD_RX.findall(r.text[:4000])))
+                rows.append({
+                    "group": group,
+                    "path": path,
+                    "status": r.status_code,
+                    "length": len(r.text),
+                    "marker": ",".join(marker),
+                    "hash": hashlib.sha1(r.content[:2048]).hexdigest()[:12],
+                })
+            except requests.RequestException as e:
+                rows.append({"group": group, "path": path, "status": "ERR", "length": 0, "marker": str(e), "hash": ""})
+    with open("exports/payment_platform_route_matrix.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["group", "path", "status", "length", "marker", "hash"])
+        w.writeheader()
+        w.writerows(rows)
+    return rows
+```
+
+命中后不要停在“是什么平台”：
+
+1. `order_query` 有响应：立刻转 `payment-email-bounce-idor.md` 和 IDOR 对象图谱。
+2. `valuation` 有响应：抓 `commodity_id/pay_id/coupon/num`，转金额重算和参数篡改。
+3. `payment_plugin` 有响应：提取 `sign_type/out_trade_no/money/notify_url`，转回调异步链。
+4. `install_config` 有响应：抽 DBMS、表前缀、队列和日志路径，转数据库配置/备份文档。
+5. 如果路径只返回固定 403/302，继续比较 body hash、Set-Cookie 和 `Allow`，判断是否进入框架路由。
+
 ## 1. acg-faka (v3.4.x)
 
 **案例**: beigpt, dimosky, tg5288
@@ -16535,7 +16695,7 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # Ticket Rush API Reversing — 票务抢购状态机、Token 与风控参数
 
-> 白盒知识源：`mikumifa/biliTickerBuy`。本篇用于 CTF/授权票务系统逆向，重点是从公开前端与参考实现恢复 `detail → prepare → create → pay` 状态机，而不是把 UI 的“未开售”当作安全边界。
+> 白盒知识源：`mikumifa/biliTickerBuy`。本篇用于 CTF/授权票务系统逆向，重点是从公开前端与参考实现恢复 `detail → prepare → create → pay` 状态机，而不是把 UI 的“未开售”当作服务端边界。
 
 ## 0. 适用场景
 
@@ -16555,6 +16715,65 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 | create body 含 `pay_money/count/buyer_info` | 单变量突变，观察服务端采用哪份数据 | 低价/0 元/错 buyer 进入订单 | 服务端重算金额并重新校验 buyer |
 | ctoken/newRisk/clickPosition | Hook 生成函数输入和阶段差异 | 固定/篡改 ctoken 仍进入 create handler | 风控字段缺失即阻断，或错误码固定 |
 | getPayParam 可独立调用 | 枚举 order_id 与状态机跳转 | 未支付订单能取支付参数、跳过前置状态 | order_id 绑定账号和订单状态 |
+
+### 0.1 票务状态机到支付账本
+
+票务题不要只盯 token。真正的高价值证据是订单账本：库存扣减、实名锁定、支付参数、回调日志、退款/取消和队列任务。每一次 prepare/create/getPayParam 都要保存前后状态差分。
+
+| 阶段 | 输入字段 | 账本观察 | SQL/支付下一跳 |
+|---|---|---|---|
+| detail | `project_id/screen_id/sku_id/price/sale_start` | 商品目录、价格、开售窗口 | 价格重算、SKU 绑定 |
+| prepare | `buyer_info/count/ctoken` | token、实名锁、库存预占 | token/body 优先级 |
+| create | `token/pay_money/timestamp/risk` | `order_id/status/amount/lock_id` | 支付逻辑、竞态 |
+| getPayParam | `order_id` | 支付渠道参数、签名字段 | 回调重放、IDOR |
+| cancel/refund | `order_id/refund_id` | 库存回滚、余额流水 | lost update、状态机跳跃 |
+| export/log | `order_id/user_id/project_id` | 后台导出、队列日志、SQL 报错 | SQLi、BAC |
+
+状态差分记录器：
+
+```python
+# ticket_state_ledger_diff.py
+import csv
+import hashlib
+import json
+from pathlib import Path
+
+WATCH = ("order_id", "status", "amount", "pay_money", "paid_at", "refund_id", "stock", "lock_id", "buyer_info", "token")
+
+def digest(body):
+    return hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
+
+def pick(obj):
+    if isinstance(obj, dict):
+        return {k: obj.get(k) for k in WATCH if k in obj}
+    return {}
+
+def record(case, phase, request_body, response_body, out="exports/ticket_ledger_timeline.csv"):
+    Path("exports").mkdir(exist_ok=True)
+    row = {
+        "case": case,
+        "phase": phase,
+        "request_hash": digest(request_body),
+        "response_hash": digest(response_body),
+        "request_watch": json.dumps(pick(request_body), ensure_ascii=False),
+        "response_watch": json.dumps(pick(response_body), ensure_ascii=False),
+    }
+    exists = Path(out).exists()
+    with open(out, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=row.keys())
+        if not exists:
+            w.writeheader()
+        w.writerow(row)
+    return row
+```
+
+执行顺序：
+
+1. detail 阶段抽完整 SKU 矩阵，确认价格、开售时间和库存字段。
+2. prepare 阶段固定 buyer，只改 `sku/count/ctoken`，看 token 和库存锁是否变化。
+3. create 阶段固定 token，只改 body，判断服务端偏信 token 还是 body。
+4. getPayParam 阶段跨账号/跨订单测 `order_id` 绑定，命中则转 IDOR/BAC。
+5. 并发 create/cancel/refund 时保存 `ticket_ledger_timeline.csv`，命中库存或余额错序则转竞态文档。
 
 ### 目标产物
 
@@ -16701,7 +16920,7 @@ count      (2 bytes, big-endian)
 sku_id     (4 bytes, big-endian)
 ```
 
-随后 Base64，并映射 `/+=` → `_-.`。它没有 secret，因此安全性只能来自服务端对时间、元组、会话和 prepare 状态的校验。
+随后 Base64，并映射 `/+=` → `_-.`。它没有 secret，因此边界只能来自服务端对时间、元组、会话和 prepare 状态的校验。
 
 ```python
 #!/usr/bin/env python3
@@ -16813,77 +17032,7 @@ beforeunload/openWindow, m5, timer(2B), timediff(2B), m6..m9
 |---|---|---|---|
 | missing | 删除 ctoken | 仍进入 create handler | 直接 `risk token required` |
 | replay | 复用 prepare 阶段 ctoken | create 接受或只返回库存错误 | `ctoken stage invalid` |
-| stale timer | timer/timediff 固定旧值 | 响应与 baseline 一致 | `risk expired` 或错误码固定 |
-| behavior flip | 改 touch/openWindow/visibility | 只影响风控分，不阻断订单 | 进入滑块/验证码/拒绝分支 |
-| cross session | A 会话 ctoken 给 B | B 可继续 prepare/create | 明确绑定 cookie/device |
-
-hook 时优先记录“生成前输入对象”，因为最终 Base64 很难解释字段贡献。
-
-## 6. hot project 分支
-
-热门项目 create 请求额外依赖：
-
-```json
-{
-  "ptoken": "<prepare response; remove '='>",
-  "ctoken": "<create-stage behavior token>",
-  "clickPosition": {},
-  "orderCreateUrl": "https://show.bilibili.com/api/ticket/order/createV2",
-  "newRisk": true,
-  "requestSource": "neul-next"
-}
-```
-
-`ptoken` 是 prepare → create 的服务端状态桥。若它绑定元组/会话/时效，直接跳过 prepare 的路径应失败；若未绑定，则重点测试跨账号、跨 SKU、跨场次重放。
-
-## 7. JSHook 运行时定位
-
-先在导航前开启网络监控，然后定位详情与下单 bundle：
-
-```text
-network_enable
-page_navigate(target, enableNetworkMonitoring=true)
-network_get_requests(url="ticket", limit=50)
-search_in_scripts(keyword="order/createV2", contextLines=8)
-search_in_scripts(keyword="ctoken", contextLines=8)
-search_in_scripts(keyword="ptoken", contextLines=8)
-```
-
-在真实点击下单前设置 XHR breakpoint：
-
-```text
-xhr_breakpoint_set("*order/prepare*")
-xhr_breakpoint_set("*order/createV2*")
-```
-
-暂停后记录 request body、调用栈、token 生成前输入与响应，不要把第三方 vendor bundle 当业务逻辑。
-
-### 7.1 浏览器运行时提取片段
-
-在 DevTools Snippets 或 JSHook 注入，捕获 `fetch/XMLHttpRequest` 的请求体。用于 CTF 题面时，把目标域名和 cookie 留在本地 case，不进入知识库提交。
-
-```javascript
-(() => {
-  const hit = /order\/(prepare|createV2)|getPayParam|ctoken|ptoken/;
-  const oldFetch = window.fetch;
-  window.fetch = async function(input, init = {}) {
-    const url = String(input && input.url || input);
-    if (hit.test(url)) {
-      console.log("[ticket-fetch]", url, init.method || "GET", init.body || "");
-      debugger;
-    }
-    return oldFetch.apply(this, arguments);
-  };
-  const open = XMLHttpRequest.prototype.open;
-  const send = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function(method, url) {
-    this.__ticket_url = url;
-    this.__ticket_method = method;
-    return open.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function(body) {
-    if (hit.test(String(this.__ticket_url))) {
-      console.log("[t
+| stale timer | timer/tim
 
 [... content truncated for size ...]
 

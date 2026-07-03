@@ -18,7 +18,7 @@ difficulty: "advanced"
 tags: ["fingerprint", "platform", "cms", "php", "e-commerce", "recon"]
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: ["ctf-website/12-payment/payment-logic", "ctf-website/24-database/01-sqli-fundamentals", "ctf-website/24-database/05-backup-log-leak"]
+related_articles: ["ctf-website/12-payment/payment-logic", "ctf-website/12-payment/payment-email-bounce-idor", "ctf-website/12-payment/payment-callback-async", "ctf-website/24-database/01-sqli-fundamentals", "ctf-website/24-database/05-backup-log-leak", "ctf-website/24-database/06-card-platform"]
 ---
 # PHP 发卡/电商平台指纹库
 
@@ -89,6 +89,93 @@ def fp(base):
         hits.append({"path": path, "status": r.status_code, "hash": body_hash, "matched": matched})
     print(json.dumps(hits, ensure_ascii=False, indent=2))
 ```
+
+### 0.2 指纹置信度与链路路由
+
+平台识别要落到可执行链路：订单查询、估价接口、支付插件、卡密发货、安装残留、数据库备份。只命中首页 banner 没价值，至少要拿到两个独立指纹和一个业务接口响应。
+
+| 命中组合 | 平台置信度 | 立即打点 | 账本/SQL 下一跳 |
+|---|---:|---|---|
+| 静态资源 + API 前缀 | 中 | 抽商品、估价、下单参数 | `goods/orders/cards` 表名猜测 |
+| API 前缀 + 订单查询 | 高 | 匿名/跨账号查订单 | IDOR、退信、卡密 |
+| 支付插件路径 + 回调参数 | 高 | `out_trade_no/money/sign` 差分 | 回调重放、签名算法 |
+| `/install/` + `.env`/配置响应 | 高 | 连接串、表前缀、队列驱动 | 配置泄露、备份解析 |
+| JS 版本号 + 默认后台 | 中 | 对照版本脚本 | 后台路由、历史漏洞 |
+
+路由器：
+
+```python
+# payment_platform_route_matrix.py
+import csv
+import hashlib
+import re
+from urllib.parse import urljoin
+
+import requests
+
+ROUTES = {
+    "order_query": [
+        "/user/api/index/query",
+        "/ajax.php?act=query",
+        "/api/order/detail",
+        "/api/orders/{order_id}",
+    ],
+    "valuation": [
+        "/user/api/index/valuation",
+        "/ajax.php?act=gettool",
+        "/api/products",
+        "/api/checkout/preview",
+    ],
+    "payment_plugin": [
+        "/plugin/epay/",
+        "/epay/notify_url.php",
+        "/pay/notify",
+        "/api/payment/callback",
+    ],
+    "install_config": [
+        "/install/",
+        "/.env",
+        "/config/database.php",
+        "/runtime.log",
+    ],
+}
+
+FIELD_RX = re.compile(r"(order|trade|pay|money|amount|card|coupon|secret|database|mysql|redis|queue)", re.I)
+
+def probe_routes(base_url, order_id="1001"):
+    rows = []
+    s = requests.Session()
+    for group, paths in ROUTES.items():
+        for raw_path in paths:
+            path = raw_path.format(order_id=order_id)
+            url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+            try:
+                r = s.get(url, timeout=8, allow_redirects=False)
+                marker = sorted(set(FIELD_RX.findall(r.text[:4000])))
+                rows.append({
+                    "group": group,
+                    "path": path,
+                    "status": r.status_code,
+                    "length": len(r.text),
+                    "marker": ",".join(marker),
+                    "hash": hashlib.sha1(r.content[:2048]).hexdigest()[:12],
+                })
+            except requests.RequestException as e:
+                rows.append({"group": group, "path": path, "status": "ERR", "length": 0, "marker": str(e), "hash": ""})
+    with open("exports/payment_platform_route_matrix.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["group", "path", "status", "length", "marker", "hash"])
+        w.writeheader()
+        w.writerows(rows)
+    return rows
+```
+
+命中后不要停在“是什么平台”：
+
+1. `order_query` 有响应：立刻转 `payment-email-bounce-idor.md` 和 IDOR 对象图谱。
+2. `valuation` 有响应：抓 `commodity_id/pay_id/coupon/num`，转金额重算和参数篡改。
+3. `payment_plugin` 有响应：提取 `sign_type/out_trade_no/money/notify_url`，转回调异步链。
+4. `install_config` 有响应：抽 DBMS、表前缀、队列和日志路径，转数据库配置/备份文档。
+5. 如果路径只返回固定 403/302，继续比较 body hash、Set-Cookie 和 `Allow`，判断是否进入框架路由。
 
 ## 1. acg-faka (v3.4.x)
 

@@ -15,14 +15,14 @@ signals: ["ticket rush", "抢票", "状态机", "token逆向", "ctoken", "prepar
 mcp_tools: ["http_probe", "kb_router"]
 keywords: ["票务逆向", "抢票API", "token结构", "ctoken", "状态机分析", "bilibili", "API逆向", "风控绕过"]
 difficulty: "advanced"
-tags: ["reversing", "api", "ticketing", "state-machine", "token-analysis", "web-security"]
+tags: ["reversing", "api", "ticketing", "state-machine", "token-analysis", "payment"]
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: ["ctf-website/12-payment/payment-logic"]
+related_articles: ["ctf-website/12-payment/payment-logic", "ctf-website/12-payment/payment-race-lost-update", "ctf-website/12-payment/payment-callback-async", "ctf-website/24-database/02-sqli-advanced", "ctf-website/14-idor/02-bac-business-logic"]
 ---
 # Ticket Rush API Reversing — 票务抢购状态机、Token 与风控参数
 
-> 白盒知识源：`mikumifa/biliTickerBuy`。本篇用于 CTF/授权票务系统逆向，重点是从公开前端与参考实现恢复 `detail → prepare → create → pay` 状态机，而不是把 UI 的“未开售”当作安全边界。
+> 白盒知识源：`mikumifa/biliTickerBuy`。本篇用于 CTF/授权票务系统逆向，重点是从公开前端与参考实现恢复 `detail → prepare → create → pay` 状态机，而不是把 UI 的“未开售”当作服务端边界。
 
 ## 0. 适用场景
 
@@ -42,6 +42,65 @@ related_articles: ["ctf-website/12-payment/payment-logic"]
 | create body 含 `pay_money/count/buyer_info` | 单变量突变，观察服务端采用哪份数据 | 低价/0 元/错 buyer 进入订单 | 服务端重算金额并重新校验 buyer |
 | ctoken/newRisk/clickPosition | Hook 生成函数输入和阶段差异 | 固定/篡改 ctoken 仍进入 create handler | 风控字段缺失即阻断，或错误码固定 |
 | getPayParam 可独立调用 | 枚举 order_id 与状态机跳转 | 未支付订单能取支付参数、跳过前置状态 | order_id 绑定账号和订单状态 |
+
+### 0.1 票务状态机到支付账本
+
+票务题不要只盯 token。真正的高价值证据是订单账本：库存扣减、实名锁定、支付参数、回调日志、退款/取消和队列任务。每一次 prepare/create/getPayParam 都要保存前后状态差分。
+
+| 阶段 | 输入字段 | 账本观察 | SQL/支付下一跳 |
+|---|---|---|---|
+| detail | `project_id/screen_id/sku_id/price/sale_start` | 商品目录、价格、开售窗口 | 价格重算、SKU 绑定 |
+| prepare | `buyer_info/count/ctoken` | token、实名锁、库存预占 | token/body 优先级 |
+| create | `token/pay_money/timestamp/risk` | `order_id/status/amount/lock_id` | 支付逻辑、竞态 |
+| getPayParam | `order_id` | 支付渠道参数、签名字段 | 回调重放、IDOR |
+| cancel/refund | `order_id/refund_id` | 库存回滚、余额流水 | lost update、状态机跳跃 |
+| export/log | `order_id/user_id/project_id` | 后台导出、队列日志、SQL 报错 | SQLi、BAC |
+
+状态差分记录器：
+
+```python
+# ticket_state_ledger_diff.py
+import csv
+import hashlib
+import json
+from pathlib import Path
+
+WATCH = ("order_id", "status", "amount", "pay_money", "paid_at", "refund_id", "stock", "lock_id", "buyer_info", "token")
+
+def digest(body):
+    return hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
+
+def pick(obj):
+    if isinstance(obj, dict):
+        return {k: obj.get(k) for k in WATCH if k in obj}
+    return {}
+
+def record(case, phase, request_body, response_body, out="exports/ticket_ledger_timeline.csv"):
+    Path("exports").mkdir(exist_ok=True)
+    row = {
+        "case": case,
+        "phase": phase,
+        "request_hash": digest(request_body),
+        "response_hash": digest(response_body),
+        "request_watch": json.dumps(pick(request_body), ensure_ascii=False),
+        "response_watch": json.dumps(pick(response_body), ensure_ascii=False),
+    }
+    exists = Path(out).exists()
+    with open(out, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=row.keys())
+        if not exists:
+            w.writeheader()
+        w.writerow(row)
+    return row
+```
+
+执行顺序：
+
+1. detail 阶段抽完整 SKU 矩阵，确认价格、开售时间和库存字段。
+2. prepare 阶段固定 buyer，只改 `sku/count/ctoken`，看 token 和库存锁是否变化。
+3. create 阶段固定 token，只改 body，判断服务端偏信 token 还是 body。
+4. getPayParam 阶段跨账号/跨订单测 `order_id` 绑定，命中则转 IDOR/BAC。
+5. 并发 create/cancel/refund 时保存 `ticket_ledger_timeline.csv`，命中库存或余额错序则转竞态文档。
 
 ### 目标产物
 
@@ -188,7 +247,7 @@ count      (2 bytes, big-endian)
 sku_id     (4 bytes, big-endian)
 ```
 
-随后 Base64，并映射 `/+=` → `_-.`。它没有 secret，因此安全性只能来自服务端对时间、元组、会话和 prepare 状态的校验。
+随后 Base64，并映射 `/+=` → `_-.`。它没有 secret，因此边界只能来自服务端对时间、元组、会话和 prepare 状态的校验。
 
 ```python
 #!/usr/bin/env python3

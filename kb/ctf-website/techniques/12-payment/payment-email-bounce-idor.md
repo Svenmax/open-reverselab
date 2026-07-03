@@ -17,7 +17,7 @@ difficulty: "advanced"
 tags: ["idor", "email-bounce", "information-disclosure", "payment", "ctf"]
 language: "zh-CN"
 last_updated: "2026-07-04"
-related_articles: ["ctf-website/14-idor/01-idor-enumeration"]
+related_articles: ["ctf-website/14-idor/01-idor-enumeration", "ctf-website/12-payment/platform-fingerprints", "ctf-website/12-payment/payment-digital-goods", "ctf-website/12-payment/payment-callback-async", "ctf-website/24-database/06-card-platform", "ctf-website/24-database/05-backup-log-leak"]
 ---
 # 退信滥用 + 订单号授权绕过窃取卡密
 
@@ -82,6 +82,79 @@ related_articles: ["ctf-website/14-idor/01-idor-enumeration"]
 | 退信 webhook 暴露 | 构造 DSN JSON/XML/表单回调 | 回调响应带订单对象或触发重发 | 仅接受真实队列事件 |
 | 订单查询 GraphQL | 替换 `id/orderNo/email` 参数 | 非所有者读到订单节点 | resolver 过滤当前用户 |
 | 下单即预生成卡密 | 未支付订单触发通知/退信 | 未支付也能看到卡密字段 | 发货时才生成卡密 |
+
+### 邮件/订单/卡密三元组
+
+退信链的核心不是“邮箱不存在”，而是邮件、订单和发货账本的绑定关系被拆开了。先把三元组建出来，再决定走退信、订单 IDOR、回调或数据库路线。
+
+| 维度 | 证据字段 | 操作 | 命中后下一跳 |
+|---|---|---|---|
+| 邮件 | `Message-ID`, `Return-Path`, `X-Original-To`, 收件人 | 解析 NDR multipart 与原始正文 | 邮件模板、重发接口 |
+| 订单 | `order_id`, `order_sn`, `out_trade_no`, `trade_no` | 匿名/跨账号/退信 token 对比 | IDOR、回调重放 |
+| 卡密/权益 | `card_key`, `coupon`, `download_url`, `license` | 未支付/已支付/退款后三态回读 | 数字商品、发货状态机 |
+| 数据库 | 表前缀、字段名、报错、日志片段 | 反推订单表和卡密表 | 备份/日志、发卡平台 |
+| 支付 | `status`, `paid_at`, `amount`, `refund_id` | 观察退信是否触发重发/补发 | 支付状态机、异步队列 |
+
+三元组解析器：
+
+```python
+# bounce_order_tuple_extractor.py
+import csv
+import email
+import email.policy
+import json
+import re
+from pathlib import Path
+
+PATTERNS = {
+    "order_id": re.compile(r"(?:order[_ -]?(?:id|sn|no)|out_trade_no|trade_no)[\"'=:\s]+([A-Za-z0-9_-]{4,64})", re.I),
+    "card_key": re.compile(r"(?:card[_ -]?key|卡密|兑换码|license|secret)[\"'=:\s：]+([A-Za-z0-9_-]{6,128})", re.I),
+    "payment": re.compile(r"(?:amount|money|paid_at|payment_status|refund_id)[\"'=:\s]+([^<>\s,]{1,80})", re.I),
+    "download": re.compile(r"https?://[^\s\"'<>]+(?:download|card|order|license)[^\s\"'<>]*", re.I),
+}
+
+def parts(msg):
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_maintype() == "text":
+                yield part.get_content()
+    else:
+        yield msg.get_content()
+
+def extract_one(path):
+    msg = email.message_from_string(Path(path).read_text(encoding="utf-8", errors="ignore"), policy=email.policy.default)
+    text = "\n".join(parts(msg))
+    row = {
+        "file": Path(path).name,
+        "message_id": msg.get("Message-ID", ""),
+        "return_path": msg.get("Return-Path", ""),
+        "original_to": msg.get("X-Original-To", ""),
+    }
+    for key, rx in PATTERNS.items():
+        row[key] = "|".join(sorted(set(rx.findall(text))))[:500]
+    return row
+
+def extract_dir(mail_dir, out_csv="exports/bounce_order_tuple.csv"):
+    rows = [extract_one(p) for p in Path(mail_dir).glob("*.eml")]
+    Path("exports").mkdir(exist_ok=True)
+    if not rows:
+        Path(out_csv).write_text("file,message_id,return_path,original_to,order_id,card_key,payment,download\n", encoding="utf-8")
+        return []
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    Path("exports/bounce_order_tuple.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    return rows
+```
+
+判定节奏：
+
+1. 用平台指纹确定订单查询和支付插件路径。
+2. 生成一组可控订单：正常邮箱、不可达邮箱、同域别名、大小写邮箱。
+3. 把 NDR 原文、订单详情、支付状态回读对齐成 `bounce_order_tuple.csv`。
+4. 如果退信里有 `order_id` 但无卡密，继续打订单详情/重发接口。
+5. 如果退信里出现字段名或 SQL 报错，转数据库备份/日志链补表结构。
 
 ## 攻击链
 
