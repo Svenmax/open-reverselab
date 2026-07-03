@@ -35,6 +35,24 @@
 4. **按攻击网规划多路径** — 不要只走一条链，从不同入口并行探测
 5. **看 MCP 工具映射** — 技术文件末尾的"## MCP 工具映射"表标注了可自动化的步骤；优先用 MCP 工具而非手动执行
 
+### Claude Code / Codex 24h 长跑
+
+如果用户要求“24 小时自动完成全流程 CTF”或类似不中断打靶，不能只依赖提示词。
+按文件夹内置的 loop/checkpoint 协议执行：
+
+1. Claude Code 优先使用 `/loop /ctf-24h <target> [case]`。
+2. `/loop` 每轮调用 `.claude/workflows/ctf-24h-round.js`，不要让单个 workflow 阻塞 24 小时。
+3. 每轮只做有界动作，输出 `STATUS: CONTINUE|DONE|EXHAUSTED`。
+4. `cases/<case>/ai_manifest.json` 是恢复点；中断后先读 manifest 的
+   `autopilot.last_round_id`、`next_actions`、`evidence`、`dead_ends`，再继续。
+5. Codex 没有 Claude workflow runner 时，使用同一 manifest 协议：循环执行
+   `python3 scripts/ctf-website/ctf_autopilot.py <manifest> --max-actions 4 --execute`，
+   再由 Agent 按攻击网完成本轮 AI 判断和证据写回。
+6. 无人值守审批/权限由运行器配置负责。需要时先执行
+   `python3 scripts/misc/setup_unattended_ctf_runner.py --overwrite`，生成本地
+   `.codex/` 与 `.claude/settings.local.json`。
+7. 真实目标、flag、请求响应、截图、日志只保存在本地 case/export/report 目录，禁止提交。
+
 ## APK/Android 知识库
 
 分析 Android APK/DEX 时，**必须先查知识库再动手**：
