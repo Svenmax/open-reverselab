@@ -110,6 +110,118 @@ CLAUDE.md → AGENTS.md → AI-USAGE.md → boards/<board>/AI-USAGE.md
 
 Pair with [codex-session-patcher](https://github.com/ryfineZ/codex-session-patcher) for one-click project-level `.codex/` environment and MCP server configuration.
 
+## Disclaimer
+
+### 0. Definitions
+
+- **"Project"** — this repository (`open-reverseLab`), including all files, source code, compiled binaries, scripts, knowledge base articles, documentation, templates, configuration files, and any other content contained in any branch, tag, release, or commit at any point in the repository's history.
+- **"Version"** — any state of the Project identified by or retrievable through a git commit hash, branch name, tag name, release identifier, archive file (ZIP, TAR, etc.), container image, package registry entry, CI/CD build artifact, pre-release (alpha, beta, RC), snapshot, or any other distribution format, whether published by the Project maintainers or by any third party.
+- **"User"** — any natural person, legal entity, organization, automated system (including but not limited to bots, CI/CD pipelines, automated scanning services, AI/ML training pipelines, and agentic systems), or any other actor that accesses, downloads, clones, executes, inspects, references, or otherwise interacts with the Project or any Derivative, in whole or in part, whether directly or indirectly through any intermediate system, service, or person.
+- **"Derivative"** — any work based on or derived from the Project, in whole or in part, regardless of the extent of modification or the medium of distribution. This includes but is not limited to: forks, clones, modified copies, redistributions, binary recompilations, container images, package manager distributions, plugin systems, API wrappers, embedded subsets (even a single function, class, script, or snippet), translated versions, academic works that incorporate Project code, and any works that integrate, reference, link to, or wrap the Project or any portion thereof.
+
+### 1. Scope of Application
+
+**This disclaimer applies retroactively and prospectively to all Versions of the Project and all Derivatives, and binds all Users without exception.** By accessing or using the Project or any Derivative in any form or to any extent, the User unconditionally agrees to be bound by all terms of this disclaimer. If the User does not agree — in whole or in part — the User must immediately cease all access and use, and must permanently delete all copies of the Project and any Derivatives in the User's possession or control.
+
+### 2. Legal Compliance — All Jurisdictions
+
+2.1 The Project and all Derivatives must be used in strict compliance with **all** applicable laws, regulations, rules, and regulatory requirements of every jurisdiction involved, including but not limited to:
+   - (a) the laws of the country/region where the User is located or domiciled;
+   - (b) the laws of the country/region where any target system, device, network, or data resides or is registered;
+   - (c) the laws of the country/region where any server, relay, proxy, or intermediate infrastructure is physically located or legally incorporated;
+   - (d) all applicable international laws, treaties, and conventions;
+   - (e) all applicable export control and sanctions regimes, including but not limited to the U.S. Export Administration Regulations (EAR), the International Traffic in Arms Regulations (ITAR), the regulations administered by the U.S. Office of Foreign Assets Control (OFAC), the EU Dual-Use Regulation (2021/821), the UK Export Control Act, the Wassenaar Arrangement, and any equivalent laws of any other jurisdiction;
+   - (f) all applicable data protection and privacy laws, including but not limited to GDPR (EU/EEA), CCPA/CPRA (California), PIPL (China), PDPA (Singapore), LGPD (Brazil), and any equivalent laws of any other jurisdiction.
+
+2.2 The User is solely responsible for determining which laws apply and for obtaining all necessary licenses, permits, authorizations, and legal advice before using the Project.
+
+2.3 **No geographic exception exists.** The fact that the Project is accessible from a particular country or region does not constitute a representation that use in that country or region is lawful. The User must independently verify lawfulness.
+
+### 3. Authorized Purposes Only
+
+3.1 The Project is provided **exclusively** for the following purposes:
+   - (a) authorized security testing (penetration testing, vulnerability assessment, red team exercises) conducted with explicit, written, prior authorization from the owner or lawful operator of the target system;
+   - (b) CTF (Capture The Flag) competitions and similar educational cybersecurity exercises conducted in controlled, authorized environments;
+   - (c) bona fide academic research and publication, subject to all applicable ethical review and institutional approval requirements;
+   - (d) personal study and self-education;
+   - (e) reverse engineering, analysis, and security research on software, firmware, or devices for which the User holds lawful ownership or has obtained explicit, written, prior authorization from the lawful owner.
+
+3.2 **Authorization must be specific, written, and prior.** Implied, retrospective, or verbal authorization is insufficient. The User bears the burden of proving authorization was obtained.
+
+3.3 Any use outside the purposes enumerated in 3.1 is unauthorized and prohibited.
+
+### 4. Prohibited Uses
+
+4.1 The User must **not** use the Project or any Derivative for any of the following:
+   - (a) unauthorized access to, interference with, or compromise of any system, network, device, or data;
+   - (b) development, distribution, or operation of malicious software (malware, ransomware, spyware, rootkits, botnets, etc.);
+   - (c) theft, exfiltration, or unauthorized collection of data or intellectual property;
+   - (d) circumvention of copyright protection, digital rights management (DRM), or access control mechanisms, except as expressly permitted by applicable law;
+   - (e) fraud, identity theft, phishing, or any form of deception;
+   - (f) harassment, stalking, doxing, or any form of unlawful surveillance;
+   - (g) sabotage, denial-of-service attacks, or disruption of services;
+   - (h) any activity that violates the Computer Fraud and Abuse Act (CFAA, 18 U.S.C. § 1030), the UK Computer Misuse Act 1990, the Cybersecurity Law of the People's Republic of China, the EU Directive 2013/40/EU on attacks against information systems, or any equivalent law in any jurisdiction;
+   - (i) any activity in or involving a country, region, entity, or individual subject to comprehensive sanctions, embargoes, or trade restrictions administered by the United Nations, the United States, the European Union, the United Kingdom, or any other applicable authority;
+   - (j) any other activity that violates any applicable law, regulation, or third-party right.
+
+4.2 This list is non-exhaustive. The absence of a specific activity from this list does not imply authorization.
+
+### 5. No Warranty
+
+5.1 THE PROJECT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, COMPLETENESS, SECURITY, AVAILABILITY, OR FREEDOM FROM DEFECTS OR VULNERABILITIES.
+
+5.2 The Project authors, contributors, and maintainers do not warrant that the Project is error-free, secure, legally compliant, or suitable for any particular purpose. The User assumes all risk associated with the use of the Project.
+
+### 6. Limitation of Liability & Indemnification
+
+6.1 TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE PROJECT AUTHORS, CONTRIBUTORS, MAINTAINERS, OR ANY PERSON OR ENTITY ASSOCIATED WITH THE PROJECT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, PUNITIVE, OR CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT LIMITED TO LOSS OF DATA, LOSS OF PROFITS, BUSINESS INTERRUPTION, SYSTEM DAMAGE, REPUTATIONAL HARM, LEGAL PENALTIES, OR REGULATORY SANCTIONS) ARISING FROM OR IN CONNECTION WITH THE USE OF OR INABILITY TO USE THE PROJECT OR ANY DERIVATIVE, WHETHER BASED ON CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY, OR ANY OTHER LEGAL THEORY, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+6.2 **The User agrees to indemnify, defend, and hold harmless** the Project authors, contributors, and maintainers from and against any and all claims, demands, suits, proceedings, liabilities, damages, losses, costs, and expenses (including reasonable legal fees) arising from or related to the User's use, misuse, or distribution of the Project or any Derivative, or the User's violation of this disclaimer or any applicable law.
+
+### 7. Derivative Works
+
+7.1 **Mandatory retention.** Any Derivative must include this disclaimer in its entirety, in a prominent and easily discoverable location (at minimum: the root README or equivalent primary documentation file), without modification, deletion, or abridgement.
+
+7.2 **Attribution.** Any Derivative must clearly and conspicuously state its relationship to the Project, including a link to the original Project repository (`https://github.com/LING71671/open-reverselab`) and a statement that the Derivative is not endorsed by or affiliated with the Project authors.
+
+7.3 **No dilution.** The creation or distribution of a Derivative does not exempt the Derivative's author, distributor, or users from any provision of this disclaimer. All provisions apply to Derivatives with the same force as to the original Project.
+
+7.4 **Sub-licensing.** Any license grant for a Derivative must be consistent with and not purport to override, narrow, or invalidate any provision of this disclaimer.
+
+7.5 **Notification duty.** Any person who distributes the Project or a Derivative to a third party must take reasonable steps to bring this disclaimer to the attention of the recipient before or at the time of distribution.
+
+### 8. Third-Party Components
+
+The Project may include, reference, invoke, or bundle third-party software, libraries, tools, or data. Such third-party components are governed by their own licenses and disclaimers. The Project authors make no representation or warranty regarding third-party components and assume no liability arising from their use. Users must independently review and comply with all third-party terms.
+
+### 9. No Endorsement
+
+Use of the Project or any Derivative by any User does not imply endorsement, sponsorship, affiliation with, or approval by the Project authors, contributors, or maintainers. Users must not represent or imply any such endorsement.
+
+### 10. Severability
+
+If any provision of this disclaimer is held to be invalid, illegal, or unenforceable by a court or tribunal of competent jurisdiction, that provision shall be severed and the remaining provisions shall continue in full force and effect. The invalid provision shall be replaced by a valid provision that most closely approximates the intent and economic effect of the original.
+
+### 11. Governing Law & Dispute Resolution
+
+This disclaimer shall be governed by and construed in accordance with applicable law, without regard to conflict-of-law principles. Any dispute arising from or relating to this disclaimer or the use of the Project shall be resolved in accordance with applicable procedural law. The User submits to the jurisdiction of the competent courts as determined by applicable law.
+
+### 12. Amendments
+
+The Project maintainers reserve the right to amend this disclaimer at any time. The version of the disclaimer in effect at the time of the User's access or use shall govern. It is the User's responsibility to review the disclaimer periodically. Continued use after an amendment constitutes acceptance of the amended terms.
+
+### 13. Prevailing Language
+
+This disclaimer is published in English and Chinese. In the event of any conflict or ambiguity between the two language versions, the English version shall prevail.
+
+### 14. Entire Agreement
+
+This disclaimer constitutes the entire understanding between the User and the Project authors regarding the subject matter hereof, and supersedes all prior or contemporaneous communications, agreements, and understandings, whether oral or written.
+
+### 15. Survival
+
+All provisions of this disclaimer that by their nature should survive termination or cessation of use — including but not limited to provisions regarding liability, indemnification, warranty disclaimer, and governing law — shall survive indefinitely.
+
 ## License
 
 GPL-3.0-only. See [LICENSE](LICENSE) for details.
