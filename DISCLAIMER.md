@@ -132,6 +132,12 @@ This disclaimer is published in English and Chinese. In the event of any conflic
 
 15.6 **No confidential or privileged relationship.** No communication with the Project authors, contributors, or maintainers creates any attorney-client, fiduciary, confidential, or other special relationship. All communications are non-confidential unless a separate written agreement expressly provides otherwise.
 
+15.7 **Third-party transactions.**
+   - (a) The Project is licensed under GPL-3.0, which explicitly permits the commercial resale, redistribution, and bundling of the software by any party, provided the terms of the license are complied with. Accordingly, a third party's resale or commercialization of the Project or any Derivative does not, in and of itself, violate the Project's license.
+   - (b) However, the Project is and remains provided free of charge by its authors. The Project authors have never charged, and will never charge, any fee for the Project itself. Any resale, relicensing, bundling, or commercialization by any third party is an act of that third party alone. The Project authors do not participate in, authorize, endorse, derive any benefit from, or bear any responsibility for such transactions.
+   - (c) Any payment made by a User to any third party in connection with the Project or any Derivative — including but not limited to purchase, subscription, licensing, service, support, or consulting fees — does not establish any contractual, fiduciary, or other relationship between that User and the Project authors, contributors, or maintainers. Such payment confers no additional rights, privileges, or legitimate expectations upon the User as against the Project authors.
+   - (d) The free nature of the Project is not altered, waived, or diminished by any third party's commercial activity. Any User who paid a third party for access to the Project retains the right to obtain the Project directly from the original repository free of charge.
+
 ### 16. Entire Agreement
 
 This disclaimer constitutes the entire understanding between the User and the Project authors regarding the subject matter hereof, and supersedes all prior or contemporaneous communications, agreements, and understandings, whether oral or written.
