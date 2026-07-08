@@ -4,7 +4,12 @@ All notable changes to the open-reverseLab project will be documented in this fi
 
 ## [1.1.0] - 2026-07-08
 
-### Added — macOS/Linux core release
+分平台 release 标签：
+
+- `v1.1.0-macos-linux` — POSIX 核心版（macOS 与 Linux 共用）
+- `v1.1.0-windows` — Windows 完整工具链版
+
+### Added — macOS/Linux core release (`v1.1.0-macos-linux`)
 
 **POSIX 入口与 wrapper**
 - `START_HERE.sh` — macOS/Linux 首次运行检查入口
@@ -21,8 +26,8 @@ All notable changes to the open-reverseLab project will be documented in this fi
 
 ### Release notes
 
-- **macOS/Linux**：clone 后运行 `./START_HERE.sh`，再执行 `./scripts/misc/bootstrap.sh` 并 `export PATH="$PWD/tools/bin:$PWD/tools/ctf-website/bin:$PATH"`。本 release 聚焦 Python/MCP core、shell wrapper 与 PATH 中已安装的 native CLI 工具。
-- **Windows**：继续使用 `START_HERE.bat` 与 `install_tools.ps1` 安装完整 GUI/PE 工具链；完整 Windows toolchain 将随后续 Windows release 分发。
+- **macOS/Linux**（`v1.1.0-macos-linux`）：clone 后运行 `./START_HERE.sh`，再执行 `./scripts/misc/bootstrap.sh` 并 `export PATH="$PWD/tools/bin:$PWD/tools/ctf-website/bin:$PATH"`。本 release 聚焦 Python/MCP core、shell wrapper 与 PATH 中已安装的 native CLI 工具。
+- **Windows**（`v1.1.0-windows`）：双击 `START_HERE.bat`，运行 `scripts/misc/bootstrap.ps1` 与 `scripts/misc/install_tools.ps1` 安装完整 GUI/PE 工具链。
 
 ## [1.0.0] - 2026-06-25
 
